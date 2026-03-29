@@ -1,0 +1,23 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "net.vibzz.woodlightingstandards.mixin",
+  "compatibilityLevel": "JAVA_8",
+  "mixins": [
+    "AbstractFireBlockMixin",
+    "AreaHelperAccessor",
+    "ServerWorldMixin"
+  ],
+  "client": [
+    "client.WorldRendererMixin",
+    "client.MinecraftClientMixin",
+    "client.InGameHudMixin",
+    "client.GameOptionsAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "overwrites": {
+    "requireAnnotations": true
+  }
+}

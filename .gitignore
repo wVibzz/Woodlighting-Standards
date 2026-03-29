@@ -1,0 +1,6 @@
+build/
+run/
+.gradle/
+.idea/
+*.iml
+.fabric/

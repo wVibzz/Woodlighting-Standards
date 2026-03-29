@@ -1,0 +1,124 @@
+plugins {
+    id 'fabric-loom' version '1.15-SNAPSHOT'
+    id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+repositories {
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+}
+
+processResources {
+    inputs.property "version", project.version
+    inputs.property "minecraft_version", project.minecraft_version
+    inputs.property "loader_version", project.loader_version
+    filteringCharset "UTF-8"
+
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version,
+                "minecraft_version": project.minecraft_version,
+                "loader_version": project.loader_version
+    }
+}
+
+def targetJavaVersion = 8
+tasks.withType(JavaCompile).configureEach {
+    it.options.encoding = "UTF-8"
+    if (targetJavaVersion >= 10 || JavaVersion.current().isJava10Compatible()) {
+        it.options.release.set(targetJavaVersion)
+    }
+}
+
+java {
+    def javaVersion = JavaVersion.toVersion(targetJavaVersion)
+    if (JavaVersion.current() < javaVersion) {
+        toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
+    }
+    // withSourcesJar() — disabled, not needed for distribution
+}
+
+// === Default build produces the DEBUG jar (DEBUG = true in source) ===
+jar {
+    from("LICENSE") {
+        rename { "${it}_${project.archives_base_name}" }
+    }
+    archiveClassifier = 'DEBUG'
+}
+
+remapJar {
+    archiveClassifier = 'DEBUG'
+}
+
+// === Release jar: recompile with DEBUG = false, then remap ===
+
+def configFile = file("src/main/java/net/vibzz/woodlightingstandards/WoodlightBuildConfig.java")
+
+task compileReleaseJava(type: JavaCompile) {
+    source = sourceSets.main.java
+    classpath = sourceSets.main.compileClasspath
+    destinationDirectory = file("${buildDir}/classes/release")
+    options.encoding = "UTF-8"
+    if (targetJavaVersion >= 10 || JavaVersion.current().isJava10Compatible()) {
+        options.release.set(targetJavaVersion)
+    }
+
+    doFirst {
+        // Swap to release mode
+        configFile.text = configFile.text.replace("DEBUG = true", "DEBUG = false")
+    }
+    doLast {
+        // Restore for dev
+        configFile.text = configFile.text.replace("DEBUG = false", "DEBUG = true")
+    }
+}
+
+task releaseJar(type: Jar, dependsOn: [compileReleaseJava, processResources]) {
+    from("${buildDir}/classes/release")
+    from(sourceSets.main.output.resourcesDir)
+    from("LICENSE") {
+        rename { "${it}_${project.archives_base_name}" }
+    }
+    archiveBaseName = project.archives_base_name
+    archiveVersion = project.version
+    archiveClassifier = 'release-dev'
+}
+
+task remapReleaseJar(type: net.fabricmc.loom.task.RemapJarTask, dependsOn: releaseJar) {
+    input = releaseJar.archiveFile
+    archiveBaseName = project.archives_base_name
+    archiveVersion = project.version
+    archiveClassifier = ''
+    addNestedDependencies = true
+}
+
+// Clean up intermediate release-dev jar after remapping
+remapReleaseJar.doLast {
+    delete releaseJar.archiveFile
+}
+
+// Make `build` produce both jars
+build.dependsOn remapReleaseJar
+
+// configure the maven publication
+publishing {
+    publications {
+        create("mavenJava", MavenPublication) {
+            artifactId = project.archives_base_name
+            from components.java
+        }
+    }
+
+    repositories {
+    }
+}
