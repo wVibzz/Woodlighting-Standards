@@ -1,2 +1,6 @@
-Copyright (c) 2026 
-All rights reserved.
+Copyright (c) 2026 Vibzz
+All Rights Reserved.
+
+No part of this software, including source code, compiled binaries,
+or associated documentation, may be reproduced, distributed, modified,
+or used in any form without the prior written permission of the copyright holder.
