@@ -5,13 +5,6 @@ public class SeedTimingUtil {
     private static final int MAX_TICKS = 75 * 20; // 75 seconds
     private static final int MIN_TICKS = 3 * 20;  // 3 seconds
 
-    private static final double[] DIFFICULTY_MULTIPLIERS = {
-        0.0,  // Peaceful (disabled)
-        1.3,  // Easy
-        1.0,  // Normal
-        0.8   // Hard
-    };
-
     private static final double MAX_SETUP_REDUCTION = 0.40;
     private static final double MAX_LAVA_REDUCTION = 0.20;
 
@@ -23,8 +16,10 @@ public class SeedTimingUtil {
         double uniform = (double) (mixed & 0x7FFFFFFFFFFFFFFFL) / (double) Long.MAX_VALUE;
         double seconds = -Math.log(1.0 - uniform) / LAMBDA;
 
-        double diffMult = (difficulty < DIFFICULTY_MULTIPLIERS.length)
-                ? DIFFICULTY_MULTIPLIERS[difficulty] : 1.0;
+        // Vanilla: (burnChance + 40 + difficulty * 7) / (age + 30), ratio to normal
+        double normalRate = (5.0 + 40 + 2 * 7) / 30.0;
+        double diffRate = (5.0 + 40 + difficulty * 7) / 30.0;
+        double diffMult = normalRate / diffRate;
         seconds *= diffMult;
 
         double setupMult = 1.0 - (Math.max(0, Math.min(1, setupScore)) * MAX_SETUP_REDUCTION);
@@ -37,36 +32,44 @@ public class SeedTimingUtil {
         return Math.max(MIN_TICKS, Math.min(ticks, MAX_TICKS));
     }
 
-
     /**
-     * Score based on total spreadChance of filled burn slots,
-     * normalized against all slots filled with leaves/wool (spreadChance 60).
-     * Subject to change.
+     * In vanilla, getBurnChanceAtAirPos returns the MAX burnChance of all 6 neighbors.
+     * Multiple flammable blocks on the same air block don't stack - only the highest counts.
+     * What matters is how many air blocks are covered and with what burnChance.
+     *
+     * @param airBlockBurnChances max burnChance adjacent to each portal interior air block (0 if uncovered)
      */
-    public static double calculateSetupScore(int[] burnSlotSpreadChances, int maxBurnSlots) {
-        if (maxBurnSlots <= 0) return 0.0;
+    public static double calculateSetupScore(int[] airBlockBurnChances) {
+        if (airBlockBurnChances.length == 0) return 0.0;
 
-        int totalSpread = 0;
-        for (int spread : burnSlotSpreadChances) {
-            totalSpread += spread;
+        int coveredCount = 0;
+        double weightedSum = 0;
+
+        for (int burnChance : airBlockBurnChances) {
+            if (burnChance > 0) {
+                coveredCount++;
+                weightedSum += burnChance / 5.0;
+            }
         }
 
-        int maxTotal = maxBurnSlots * 60;
-        return Math.min(1.0, (double) totalSpread / maxTotal);
+        if (coveredCount == 0) return 0.0;
+
+        double coverageRatio = (double) coveredCount / airBlockBurnChances.length;
+        double qualityRatio = weightedSum / airBlockBurnChances.length;
+
+        return Math.min(1.0, coverageRatio * 0.5 + qualityRatio / 12.0 * 0.5);
     }
 
     /**
-     * Score based on reachable lava count near filled burn slots.
-     * Logarithmic scaling: 1 lava ~30%, 4 ~67%, 8 ~90%, 12+ ~100%.
-     * Subject to change.
+     * Lava score based on weighted effectiveness of each lava block.
+     * Each lava block's weight reflects its actual vanilla probability contribution.
      */
-    public static double calculateLavaScore(int effectiveLavaCount) {
-        if (effectiveLavaCount <= 0) return 0.0;
-        double raw = Math.log(1 + effectiveLavaCount) / Math.log(1 + 12);
+    public static double calculateLavaScore(double totalLavaWeight) {
+        if (totalLavaWeight <= 0) return 0.0;
+        double raw = Math.log(1 + totalLavaWeight) / Math.log(1 + 12);
         return Math.min(1.0, raw);
     }
 
-    // Stafford variant 13 of MurmurHash3 finalizer
     private static long mixSeed(long seed) {
         seed ^= (seed >>> 30);
         seed *= 0xbf58476d1ce4e5b9L;

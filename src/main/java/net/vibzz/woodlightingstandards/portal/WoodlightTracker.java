@@ -14,6 +14,7 @@ import net.minecraft.world.World;
 import net.vibzz.woodlightingstandards.mixin.AreaHelperAccessor;
 import net.vibzz.woodlightingstandards.util.FlammableBlockUtil;
 import net.vibzz.woodlightingstandards.util.LavaReachUtil;
+import net.vibzz.woodlightingstandards.util.LavaWeightUtil;
 import net.vibzz.woodlightingstandards.util.SeedTimingUtil;
 
 import java.util.ArrayList;
@@ -251,6 +252,53 @@ public class WoodlightTracker {
     }
 
     private double calculateSetupScore(ServerWorld world, NetherPortalBlock.AreaHelper helper) {
+        List<BlockPos> interiorBlocks = getInteriorBlocks(helper);
+
+        int[] airBlockBurnChances = new int[interiorBlocks.size()];
+        for (int i = 0; i < interiorBlocks.size(); i++) {
+            BlockPos airPos = interiorBlocks.get(i);
+            int maxBurn = 0;
+            for (Direction dir : Direction.values()) {
+                int burn = FlammableBlockUtil.getBurnChance(world.getBlockState(airPos.offset(dir)));
+                if (burn > maxBurn) maxBurn = burn;
+            }
+            airBlockBurnChances[i] = maxBurn;
+        }
+
+        return SeedTimingUtil.calculateSetupScore(airBlockBurnChances);
+    }
+
+    private double calculateLavaScore(ServerWorld world, NetherPortalBlock.AreaHelper helper) {
+        List<BlockPos> interiorBlocks = getInteriorBlocks(helper);
+
+        double totalWeight = 0;
+
+        for (BlockPos airPos : interiorBlocks) {
+            int maxBurn = 0;
+            for (Direction dir : Direction.values()) {
+                int burn = FlammableBlockUtil.getBurnChance(world.getBlockState(airPos.offset(dir)));
+                if (burn > maxBurn) maxBurn = burn;
+            }
+            if (maxBurn == 0) continue;
+
+            for (int dx = -3; dx <= 3; dx++) {
+                for (int dy = -3; dy <= 0; dy++) {
+                    for (int dz = -3; dz <= 3; dz++) {
+                        BlockPos checkPos = airPos.add(dx, dy, dz);
+                        if (!world.getFluidState(checkPos).isIn(FluidTags.LAVA)) continue;
+                        if (!LavaReachUtil.canLavaReachSlot(world, checkPos, airPos)) continue;
+
+                        double weight = LavaWeightUtil.calculateWeight(checkPos, airPos);
+                        totalWeight += weight;
+                    }
+                }
+            }
+        }
+
+        return SeedTimingUtil.calculateLavaScore(totalWeight);
+    }
+
+    private List<BlockPos> getInteriorBlocks(NetherPortalBlock.AreaHelper helper) {
         AreaHelperAccessor accessor = (AreaHelperAccessor) helper;
         BlockPos lowerCorner = accessor.getLowerCorner();
         Direction.Axis axis = accessor.getAxis();
@@ -258,60 +306,14 @@ public class WoodlightTracker {
         int height = helper.getHeight();
 
         Direction negativeDir = (axis == Direction.Axis.X) ? Direction.WEST : Direction.SOUTH;
-        Direction perpPositive, perpNegative;
-        if (axis == Direction.Axis.X) {
-            perpPositive = Direction.SOUTH;
-            perpNegative = Direction.NORTH;
-        } else {
-            perpPositive = Direction.EAST;
-            perpNegative = Direction.WEST;
-        }
 
-        int maxSlots = 0;
-        List<Integer> spreadChances = new ArrayList<>();
-
+        List<BlockPos> result = new ArrayList<>();
         for (int i = 0; i < width; i++) {
             for (int j = 0; j < height; j++) {
-                BlockPos interior = lowerCorner.offset(negativeDir, i).up(j);
-                BlockPos slot1 = interior.offset(perpPositive);
-                BlockPos slot2 = interior.offset(perpNegative);
-
-                maxSlots += 2;
-
-                int spread1 = FlammableBlockUtil.getSpreadChance(world.getBlockState(slot1));
-                int spread2 = FlammableBlockUtil.getSpreadChance(world.getBlockState(slot2));
-                if (spread1 > 0 && hasIgnitionSourceNearSlot(world, slot1)) spreadChances.add(spread1);
-                if (spread2 > 0 && hasIgnitionSourceNearSlot(world, slot2)) spreadChances.add(spread2);
+                result.add(lowerCorner.offset(negativeDir, i).up(j).toImmutable());
             }
         }
-
-        int[] arr = new int[spreadChances.size()];
-        for (int i = 0; i < spreadChances.size(); i++) arr[i] = spreadChances.get(i);
-        return SeedTimingUtil.calculateSetupScore(arr, maxSlots);
-    }
-
-    private double calculateLavaScore(ServerWorld world, NetherPortalBlock.AreaHelper helper) {
-        List<BlockPos> filledSlots = getFilledBurnSlots(world, helper);
-        if (filledSlots.isEmpty()) return 0.0;
-
-        Set<BlockPos> countedLava = new HashSet<>();
-        for (BlockPos slot : filledSlots) {
-            for (int dx = -3; dx <= 3; dx++) {
-                for (int dy = -3; dy <= 0; dy++) {
-                    for (int dz = -3; dz <= 3; dz++) {
-                        BlockPos checkPos = slot.add(dx, dy, dz);
-                        if (countedLava.contains(checkPos)) continue;
-                        if (world.getFluidState(checkPos).isIn(FluidTags.LAVA)) {
-                            if (LavaReachUtil.canLavaReachSlot(world, checkPos, slot)) {
-                                countedLava.add(checkPos.toImmutable());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        return SeedTimingUtil.calculateLavaScore(countedLava.size());
+        return result;
     }
 
     private boolean hasIgnitionSourceNearSlot(ServerWorld world, BlockPos slotPos) {
