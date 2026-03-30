@@ -14,8 +14,7 @@ import net.minecraft.world.World;
 import net.vibzz.woodlightingstandards.mixin.AreaHelperAccessor;
 import net.vibzz.woodlightingstandards.util.FlammableBlockUtil;
 import net.vibzz.woodlightingstandards.util.LavaReachUtil;
-import net.vibzz.woodlightingstandards.util.LavaWeightUtil;
-import net.vibzz.woodlightingstandards.util.SeedTimingUtil;
+import net.vibzz.woodlightingstandards.util.PortalLightProbability;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -94,9 +93,9 @@ public class WoodlightTracker {
                     continue;
                 }
 
-                double setupScore = calculateSetupScore(world, helper);
-                double lavaScore = calculateLavaScore(world, helper);
-                entry.recalculate(currentDifficulty, setupScore, lavaScore);
+                List<BlockPos> interiorBlocks = getInteriorBlocks(helper);
+                double prob = PortalLightProbability.compute(world, interiorBlocks, currentDifficulty);
+                entry.recalculate(prob);
 
                 if (currentTick >= entry.targetTick) {
                     helper.createPortal();
@@ -154,10 +153,12 @@ public class WoodlightTracker {
                         if (lacksIgnitionSourceNearFrame(world, helper)) continue;
 
                         int attempt = WoodlightPersistentState.get(world).peekNextAttempt();
+                        List<BlockPos> interiorBlocks = getInteriorBlocks(helper);
+                        double prob = PortalLightProbability.compute(world, interiorBlocks, world.getDifficulty().getId());
 
                         PortalLightEntry entry = new PortalLightEntry(
                                 lowerCorner, foundAxis, above, attempt,
-                                world.getTime(), world.getSeed(), world.getDifficulty().getId());
+                                world.getTime(), world.getSeed(), prob);
                         activeTimers.computeIfAbsent(world.getRegistryKey(), k -> new CopyOnWriteArrayList<>()).add(entry);
                         persistEntries(world);
                     }
@@ -249,53 +250,6 @@ public class WoodlightTracker {
             }
         }
         return result;
-    }
-
-    private double calculateSetupScore(ServerWorld world, NetherPortalBlock.AreaHelper helper) {
-        List<BlockPos> interiorBlocks = getInteriorBlocks(helper);
-
-        int[] airBlockBurnChances = new int[interiorBlocks.size()];
-        for (int i = 0; i < interiorBlocks.size(); i++) {
-            BlockPos airPos = interiorBlocks.get(i);
-            int maxBurn = 0;
-            for (Direction dir : Direction.values()) {
-                int burn = FlammableBlockUtil.getBurnChance(world.getBlockState(airPos.offset(dir)));
-                if (burn > maxBurn) maxBurn = burn;
-            }
-            airBlockBurnChances[i] = maxBurn;
-        }
-
-        return SeedTimingUtil.calculateSetupScore(airBlockBurnChances);
-    }
-
-    private double calculateLavaScore(ServerWorld world, NetherPortalBlock.AreaHelper helper) {
-        List<BlockPos> interiorBlocks = getInteriorBlocks(helper);
-
-        double totalWeight = 0;
-
-        for (BlockPos airPos : interiorBlocks) {
-            int maxBurn = 0;
-            for (Direction dir : Direction.values()) {
-                int burn = FlammableBlockUtil.getBurnChance(world.getBlockState(airPos.offset(dir)));
-                if (burn > maxBurn) maxBurn = burn;
-            }
-            if (maxBurn == 0) continue;
-
-            for (int dx = -3; dx <= 3; dx++) {
-                for (int dy = -3; dy <= 0; dy++) {
-                    for (int dz = -3; dz <= 3; dz++) {
-                        BlockPos checkPos = airPos.add(dx, dy, dz);
-                        if (!world.getFluidState(checkPos).isIn(FluidTags.LAVA)) continue;
-                        if (!LavaReachUtil.canLavaReachSlot(world, checkPos, airPos)) continue;
-
-                        double weight = LavaWeightUtil.calculateWeight(checkPos, airPos);
-                        totalWeight += weight;
-                    }
-                }
-            }
-        }
-
-        return SeedTimingUtil.calculateLavaScore(totalWeight);
     }
 
     private List<BlockPos> getInteriorBlocks(NetherPortalBlock.AreaHelper helper) {

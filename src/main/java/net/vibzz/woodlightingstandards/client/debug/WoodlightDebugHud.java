@@ -82,20 +82,17 @@ public class WoodlightDebugHud {
             int filled = pd.filledBurnSlots.size();
             int max = pd.maxBurnSlots;
             String burnColor = filled == 0 ? "§c" : filled == max ? "§a" : "§e";
-            String scoreColor = pd.setupScore >= 0.8 ? "§a" : pd.setupScore >= 0.4 ? "§e" : "§c";
             text.drawWithShadow(matrices,
                     "Burn: " + burnColor + filled + "/" + max
-                            + "§r | Score: " + scoreColor + String.format("%.0f%%", pd.setupScore * 100),
+                            + "§r | Lava: §6" + pd.effectiveLava.size(),
                     x, y, 0xFFFFFF);
             y += lineH;
 
-
-            int effectiveLava = pd.effectiveLava.size();
-            String lavaColor = effectiveLava == 0 ? "§c" : "§6";
-            String lavaScoreColor = pd.lavaScore >= 0.8 ? "§a" : pd.lavaScore >= 0.4 ? "§e" : "§c";
+            String probColor = pd.perTickProbability > 0.005 ? "§a" : pd.perTickProbability > 0.001 ? "§e" : "§c";
+            double expectedSec = pd.perTickProbability > 0 ? (1.0 / pd.perTickProbability) / 20.0 : 0;
             text.drawWithShadow(matrices,
-                    "Lava: " + lavaColor + effectiveLava
-                            + "§r | Score: " + lavaScoreColor + String.format("%.0f%%", pd.lavaScore * 100),
+                    "P/tick: " + probColor + String.format("%.4f%%", pd.perTickProbability * 100)
+                            + "§r | Avg: §b" + String.format("%.1fs", expectedSec),
                     x, y, 0xFFFFFF);
             y += lineH;
 

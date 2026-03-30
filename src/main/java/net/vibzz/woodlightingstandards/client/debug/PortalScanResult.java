@@ -51,9 +51,7 @@ public class PortalScanResult {
         public int maxLavaZone = 0;
 
 
-        public double setupScore = 0.0;
-        public double lavaScore = 0.0;
-
+        public double perTickProbability = 0.0;
 
         public boolean timerActive = false;
         public long timerTargetTick = 0;
@@ -134,8 +132,7 @@ public class PortalScanResult {
                 pd.seedDerivedTicks = entry.delayTicks;
                 pd.timerStartTick = entry.startTick;
                 pd.attempt = entry.attempt;
-                pd.setupScore = entry.setupScore;
-                pd.lavaScore = entry.lavaScore;
+                pd.perTickProbability = entry.perTickProbability;
             } else {
                 pd.timerActive = false;
             }

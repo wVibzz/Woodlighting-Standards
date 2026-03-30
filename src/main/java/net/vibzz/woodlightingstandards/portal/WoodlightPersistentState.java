@@ -63,9 +63,9 @@ public class WoodlightPersistentState extends PersistentState {
             int attempt = entryTag.getInt("Attempt");
             long startTick = entryTag.getLong("StartTick");
             long worldSeed = entryTag.getLong("WorldSeed");
-            int difficulty = entryTag.getInt("Difficulty");
+            double prob = entryTag.getDouble("Probability");
 
-            savedEntries.add(new PortalLightEntry(lowerCorner, axis, probePos, attempt, startTick, worldSeed, difficulty));
+            savedEntries.add(new PortalLightEntry(lowerCorner, axis, probePos, attempt, startTick, worldSeed, prob));
         }
     }
 
@@ -86,7 +86,7 @@ public class WoodlightPersistentState extends PersistentState {
             entryTag.putInt("Attempt", entry.attempt);
             entryTag.putLong("StartTick", entry.startTick);
             entryTag.putLong("WorldSeed", entry.worldSeed);
-            entryTag.putInt("Difficulty", 2);
+            entryTag.putDouble("Probability", entry.perTickProbability);
             list.add(entryTag);
         }
         tag.put("ActiveTimers", list);
