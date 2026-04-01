@@ -8,3 +8,7 @@
 - Biome humidity not factored in.
 ### Known Issues
 - Fire chain spread (fire → fire → portal) not solved
+
+
+### Credits
+@ClearColdWater - w/ testing and feedback
