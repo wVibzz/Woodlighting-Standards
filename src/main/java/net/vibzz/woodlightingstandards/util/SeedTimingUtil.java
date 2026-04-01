@@ -1,12 +1,12 @@
 package net.vibzz.woodlightingstandards.util;
 
+import net.vibzz.woodlightingstandards.WoodlightConfig;
+
 /**
  * Derives a deterministic woodlight delay from the world seed and
  * the vanilla-computed per-tick lighting probability.
  */
 public class SeedTimingUtil {
-    private static final int MAX_TICKS = 75 * 20;
-    private static final int MIN_TICKS = 3 * 20;
     private static final double FALLBACK_LAMBDA = 0.06;
 
     public static int calculateTicks(long seed, int attempt, double perTickProbability) {
@@ -20,7 +20,7 @@ public class SeedTimingUtil {
             ticks = -Math.log(1.0 - uniform) / FALLBACK_LAMBDA * 20;
         }
 
-        return Math.max(MIN_TICKS, Math.min((int) ticks, MAX_TICKS));
+        return Math.max(WoodlightConfig.MIN_SECONDS * 20, Math.min((int) ticks, WoodlightConfig.MAX_SECONDS * 20));
     }
 
     private static long mixSeed(long seed) {

@@ -1,89 +1,90 @@
 package net.vibzz.woodlightingstandards.util;
 
+import net.minecraft.block.BlockState;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
+import net.minecraft.world.WorldAccess;
 
 /**
- * Calculates the per-tick probability weight of a lava block contributing
- * to lighting a portal, based on vanilla LavaFluid.onRandomTick mechanics.
+ * Calculates the probability that a lava block places fire at the exact
+ * position of a portal air block, matching vanilla LavaFluid.onRandomTick.
 
- * Vanilla has two branches per random tick:
- *   Branch 1 (probability 2/3): walk 1-2 steps, each (+-1X, +1Y, +-1Z)
- *   Branch 2 (probability 1/3): check 3 random positions at (+-1X, 0Y, +-1Z), fire at +1Y
-
- * Each lava block gets randomTickSpeed (3) chances per tick to be selected
- * from its 4096-block subchunk, doubled due to the vanilla bug where lava
- * gets ticked in both blockstate and fluidstate random ticks.
+ * Branch 1 (i=1 or i=2): walk steps (+-1X, +1Y, +-1Z), canLightFire on fire pos
+ * Branch 2 (i=0): 3 attempts (+-1X, 0Y, +-1Z), hasBurnableBlock on THAT pos, fire at +1Y
  */
 public class LavaWeightUtil {
 
-    /**
-     * Calculate the relative weight of a lava block at lavaPos for lighting
-     * the portal air block at airPos. Higher weight = more effective.
-
-     * Returns the probability per random tick attempt that this specific
-     * lava block places fire adjacent to (or at) airPos.
-     */
-    public static double calculateWeight(BlockPos lavaPos, BlockPos airPos) {
-        double weight = 0;
-
+    public static double calculateWeight(WorldAccess world, BlockPos lavaPos, BlockPos airPos,
+                                         boolean airHasBurnableNeighbor) {
         int dx = airPos.getX() - lavaPos.getX();
         int dy = airPos.getY() - lavaPos.getY();
         int dz = airPos.getZ() - lavaPos.getZ();
 
-        weight += branch2Weight(dx, dy, dz);
-        weight += branch1Step1Weight(dx, dy, dz);
-        weight += branch1Step2Weight(dx, dy, dz);
-
+        double weight = 0;
+        weight += branch2Weight(world, lavaPos, dx, dy, dz);
+        weight += branch1Step1Weight(dx, dy, dz, airHasBurnableNeighbor);
+        weight += branch1Step2Weight(world, lavaPos, dx, dy, dz, airHasBurnableNeighbor);
         return weight;
     }
 
-    // i=0 (1/3 chance), 3 attempts at (+-1X, +1Y, +-1Z) from lava
-    private static double branch2Weight(int dx, int dy, int dz) {
-        double prob = 0;
-        for (int fdx = -1; fdx <= 1; fdx++) {
-            for (int fdz = -1; fdz <= 1; fdz++) {
-                if (isAdjacentOrEqual(fdx, 1, fdz, dx, dy, dz)) {
-                    prob += (1.0 / 3) * (1.0 / 9);
-                }
-            }
-        }
-        return prob * 3;
+    // i=0 (1/3 chance), 3 attempts
+    // blockPos2 = lava.add(randDx, 0, randDz), fire at blockPos2.up()
+    // Vanilla checks hasBurnableBlock(blockPos2) = Material.isBurnable() at blockPos2
+    private static double branch2Weight(WorldAccess world, BlockPos lavaPos, int dx, int dy, int dz) {
+        if (dy != 1) return 0;
+        if (dx < -1 || dx > 1 || dz < -1 || dz > 1) return 0;
+
+        // blockPos2 = lava.add(dx, 0, dz) — check if THAT block is burnable
+        BlockPos blockPos2 = lavaPos.add(dx, 0, dz);
+        if (!world.getBlockState(blockPos2).getMaterial().isBurnable()) return 0;
+
+        double pHit = 1.0 - Math.pow(8.0 / 9, 3);
+        return (1.0 / 3) * pHit;
     }
 
-    // i=1 (1/3 chance), one step (+-1X, +1Y, +-1Z)
-    private static double branch1Step1Weight(int dx, int dy, int dz) {
-        double prob = 0;
-        for (int sdx = -1; sdx <= 1; sdx++) {
-            for (int sdz = -1; sdz <= 1; sdz++) {
-                if (isAdjacentOrEqual(sdx, 1, sdz, dx, dy, dz)) {
-                    prob += (1.0 / 3) * (1.0 / 9);
-                }
-            }
-        }
-        return prob;
+    // i=1 or i=2 first step (2/3 chance), step to (+-1X, +1Y, +-1Z)
+    // Both i=1 and i=2 take a first step at +1Y. If it lands on the target
+    // and canLightFire passes, fire is placed and the method returns.
+    private static double branch1Step1Weight(int dx, int dy, int dz, boolean airHasBurnableNeighbor) {
+        if (!airHasBurnableNeighbor) return 0;
+        if (dy != 1) return 0;
+        if (dx < -1 || dx > 1 || dz < -1 || dz > 1) return 0;
+        return (2.0 / 3) * (1.0 / 9);
     }
 
     // i=2 (1/3 chance), two steps each (+-1X, +1Y, +-1Z)
-    private static double branch1Step2Weight(int dx, int dy, int dz) {
+    // Step 1 can place fire and return early, or hit solid and return.
+    private static double branch1Step2Weight(WorldAccess world, BlockPos lavaPos,
+                                             int dx, int dy, int dz, boolean airHasBurnableNeighbor) {
+        if (!airHasBurnableNeighbor) return 0;
+        if (dy != 2) return 0;
+        if (dx < -2 || dx > 2 || dz < -2 || dz > 2) return 0;
+
         double prob = 0;
         for (int s1dx = -1; s1dx <= 1; s1dx++) {
             for (int s1dz = -1; s1dz <= 1; s1dz++) {
-                for (int s2dx = -1; s2dx <= 1; s2dx++) {
-                    for (int s2dz = -1; s2dz <= 1; s2dz++) {
-                        if (isAdjacentOrEqual(s1dx + s2dx, 2, s1dz + s2dz, dx, dy, dz)) {
-                            prob += (1.0 / 3) * (1.0 / 81);
-                        }
-                    }
-                }
+                int s2dx = dx - s1dx;
+                int s2dz = dz - s1dz;
+                if (s2dx < -1 || s2dx > 1 || s2dz < -1 || s2dz > 1) continue;
+
+                BlockPos step1Pos = lavaPos.add(s1dx, 1, s1dz);
+                BlockState step1State = world.getBlockState(step1Pos);
+
+                if (step1State.getMaterial().blocksMovement()) continue;
+
+                if (step1State.isAir() && canLightFire(world, step1Pos)) continue;
+
+                prob += 1.0 / 81.0;
             }
         }
-        return prob;
+
+        return (1.0 / 3) * prob;
     }
 
-    private static boolean isAdjacentOrEqual(int fx, int fy, int fz, int tx, int ty, int tz) {
-        int ddx = Math.abs(fx - tx);
-        int ddy = Math.abs(fy - ty);
-        int ddz = Math.abs(fz - tz);
-        return (ddx + ddy + ddz) <= 1;
+    private static boolean canLightFire(WorldAccess world, BlockPos pos) {
+        for (Direction dir : Direction.values()) {
+            if (world.getBlockState(pos.offset(dir)).getMaterial().isBurnable()) return true;
+        }
+        return false;
     }
 }

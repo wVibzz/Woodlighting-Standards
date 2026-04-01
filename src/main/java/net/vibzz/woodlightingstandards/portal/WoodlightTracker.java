@@ -6,14 +6,11 @@ import net.minecraft.block.NetherPortalBlock;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.tag.BlockTags;
-import net.minecraft.tag.FluidTags;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.registry.RegistryKey;
 import net.minecraft.world.World;
 import net.vibzz.woodlightingstandards.mixin.AreaHelperAccessor;
-import net.vibzz.woodlightingstandards.util.FlammableBlockUtil;
-import net.vibzz.woodlightingstandards.util.LavaReachUtil;
 import net.vibzz.woodlightingstandards.util.PortalLightProbability;
 
 import java.util.ArrayList;
@@ -88,13 +85,12 @@ public class WoodlightTracker {
                     continue;
                 }
 
-                if (lacksFlammableBlockNearFrame(world, helper) || lacksIgnitionSourceNearFrame(world, helper)) {
+                List<BlockPos> interiorBlocks = getInteriorBlocks(helper);
+                double prob = PortalLightProbability.compute(world, interiorBlocks, currentDifficulty);
+                if (prob <= 0) {
                     toRemove.add(entry);
                     continue;
                 }
-
-                List<BlockPos> interiorBlocks = getInteriorBlocks(helper);
-                double prob = PortalLightProbability.compute(world, interiorBlocks, currentDifficulty);
                 entry.recalculate(prob);
 
                 if (currentTick >= entry.targetTick) {
@@ -149,12 +145,11 @@ public class WoodlightTracker {
 
                         if (isTracked(world, helper)) continue;
 
-                        if (lacksFlammableBlockNearFrame(world, helper)) continue;
-                        if (lacksIgnitionSourceNearFrame(world, helper)) continue;
-
-                        int attempt = WoodlightPersistentState.get(world).peekNextAttempt();
                         List<BlockPos> interiorBlocks = getInteriorBlocks(helper);
                         double prob = PortalLightProbability.compute(world, interiorBlocks, world.getDifficulty().getId());
+                        if (prob <= 0) continue;
+
+                        int attempt = WoodlightPersistentState.get(world).peekNextAttempt();
 
                         PortalLightEntry entry = new PortalLightEntry(
                                 lowerCorner, foundAxis, above, attempt,
@@ -182,76 +177,6 @@ public class WoodlightTracker {
         return false;
     }
 
-    private boolean lacksFlammableBlockNearFrame(ServerWorld world, NetherPortalBlock.AreaHelper helper) {
-        AreaHelperAccessor accessor = (AreaHelperAccessor) helper;
-        BlockPos lowerCorner = accessor.getLowerCorner();
-        Direction.Axis axis = accessor.getAxis();
-        int width = helper.getWidth();
-        int height = helper.getHeight();
-
-        Direction negativeDir = (axis == Direction.Axis.X) ? Direction.WEST : Direction.SOUTH;
-        Direction perpPositive, perpNegative;
-        if (axis == Direction.Axis.X) {
-            perpPositive = Direction.SOUTH;
-            perpNegative = Direction.NORTH;
-        } else {
-            perpPositive = Direction.EAST;
-            perpNegative = Direction.WEST;
-        }
-
-        for (int i = 0; i < width; i++) {
-            for (int j = 0; j < height; j++) {
-                BlockPos interior = lowerCorner.offset(negativeDir, i).up(j);
-                if (isBurnable(world, interior.offset(perpPositive))) return false;
-                if (isBurnable(world, interior.offset(perpNegative))) return false;
-                if (j == 0 && isBurnable(world, interior.down())) return false;
-            }
-        }
-
-        return true;
-    }
-
-    private boolean lacksIgnitionSourceNearFrame(ServerWorld world, NetherPortalBlock.AreaHelper helper) {
-        List<BlockPos> filledBurnSlots = getFilledBurnSlots(world, helper);
-        if (filledBurnSlots.isEmpty()) return true;
-
-        for (BlockPos burnSlot : filledBurnSlots) {
-            if (hasIgnitionSourceNearSlot(world, burnSlot)) return false;
-        }
-
-        return true;
-    }
-
-    private List<BlockPos> getFilledBurnSlots(ServerWorld world, NetherPortalBlock.AreaHelper helper) {
-        AreaHelperAccessor accessor = (AreaHelperAccessor) helper;
-        BlockPos lowerCorner = accessor.getLowerCorner();
-        Direction.Axis axis = accessor.getAxis();
-        int width = helper.getWidth();
-        int height = helper.getHeight();
-
-        Direction negativeDir = (axis == Direction.Axis.X) ? Direction.WEST : Direction.SOUTH;
-        Direction perpPositive, perpNegative;
-        if (axis == Direction.Axis.X) {
-            perpPositive = Direction.SOUTH;
-            perpNegative = Direction.NORTH;
-        } else {
-            perpPositive = Direction.EAST;
-            perpNegative = Direction.WEST;
-        }
-
-        List<BlockPos> result = new ArrayList<>();
-        for (int i = 0; i < width; i++) {
-            for (int j = 0; j < height; j++) {
-                BlockPos interior = lowerCorner.offset(negativeDir, i).up(j);
-                BlockPos slot1 = interior.offset(perpPositive);
-                BlockPos slot2 = interior.offset(perpNegative);
-                if (isBurnable(world, slot1)) result.add(slot1.toImmutable());
-                if (isBurnable(world, slot2)) result.add(slot2.toImmutable());
-            }
-        }
-        return result;
-    }
-
     private List<BlockPos> getInteriorBlocks(NetherPortalBlock.AreaHelper helper) {
         AreaHelperAccessor accessor = (AreaHelperAccessor) helper;
         BlockPos lowerCorner = accessor.getLowerCorner();
@@ -270,27 +195,4 @@ public class WoodlightTracker {
         return result;
     }
 
-    private boolean hasIgnitionSourceNearSlot(ServerWorld world, BlockPos slotPos) {
-        for (Direction dir : Direction.values()) {
-            if (world.getBlockState(slotPos.offset(dir)).isIn(BlockTags.FIRE)) return true;
-        }
-
-        for (int dx = -3; dx <= 3; dx++) {
-            for (int dy = -3; dy <= 0; dy++) {
-                for (int dz = -3; dz <= 3; dz++) {
-                    BlockPos checkPos = slotPos.add(dx, dy, dz);
-                    if (world.getFluidState(checkPos).isIn(FluidTags.LAVA)) {
-                        if (LavaReachUtil.canLavaReachSlot(world, checkPos, slotPos)) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        return false;
-    }
-
-    private boolean isBurnable(ServerWorld world, BlockPos pos) {
-        return FlammableBlockUtil.isFlammable(world.getBlockState(pos));
-    }
 }
