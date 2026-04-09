@@ -10,6 +10,7 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Matrix4f;
 import net.minecraft.util.math.Vec3d;
 import org.lwjgl.opengl.GL11;
+import java.util.Map;
 import java.util.Set;
 
 public class WoodlightDebugOverlay {
@@ -55,6 +56,17 @@ public class WoodlightDebugOverlay {
 
         for (BlockPos pos : scan.lavaSources) {
             drawOutline(matrices, pos, 0.4f, 0.7f);
+        }
+
+        for (PortalScanResult.PortalData pd : scan.portals) {
+            for (Map.Entry<BlockPos, Long> entry : pd.scheduledFires.entrySet()) {
+                float pulse = (float) (0.3 + 0.2 * Math.sin(System.currentTimeMillis() / 150.0));
+                drawOutline(matrices, entry.getKey(), 0.8f, pulse);
+            }
+            for (Map.Entry<BlockPos, Long> entry : pd.scheduledBurnAway.entrySet()) {
+                float pulse = (float) (0.3 + 0.2 * Math.sin(System.currentTimeMillis() / 150.0));
+                drawOutline(matrices, entry.getKey(), 0.2f, pulse);
+            }
         }
 
         RenderSystem.enableDepthTest();

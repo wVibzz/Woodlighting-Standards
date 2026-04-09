@@ -1,8 +1,14 @@
 package net.vibzz.woodlightingstandards.portal;
 
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.ChunkSectionPos;
 import net.minecraft.util.math.Direction;
+import net.vibzz.woodlightingstandards.fire.FireEventScheduler;
 import net.vibzz.woodlightingstandards.util.SeedTimingUtil;
+
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 
 public class PortalLightEntry {
     public final BlockPos lowerCorner;
@@ -11,30 +17,53 @@ public class PortalLightEntry {
     public final int attempt;
     public final long startTick;
     public final long worldSeed;
+    public final int portalWidth;
+    public final int portalHeight;
+    public final Set<Long> portalSubChunks;
+    public final FireEventScheduler fireScheduler;
 
-    public int delayTicks;
-    public long targetTick;
+    public final double targetCumulative;
+    public double cumulativeProbability;
     public double perTickProbability;
-    private double lastProbability = -1;
 
     public PortalLightEntry(BlockPos lowerCorner, Direction.Axis axis, BlockPos probePos,
-                            int attempt, long startTick, long worldSeed, double perTickProbability) {
+                            int attempt, long startTick, long worldSeed, double perTickProbability,
+                            int portalWidth, int portalHeight) {
         this.lowerCorner = lowerCorner.toImmutable();
         this.axis = axis;
         this.probePos = probePos.toImmutable();
         this.attempt = attempt;
         this.startTick = startTick;
         this.worldSeed = worldSeed;
+        this.portalWidth = portalWidth;
+        this.portalHeight = portalHeight;
         this.perTickProbability = perTickProbability;
-        recalculate(perTickProbability);
+        this.portalSubChunks = new HashSet<>();
+        this.fireScheduler = new FireEventScheduler(worldSeed, attempt, lowerCorner, axis, portalWidth);
+        this.targetCumulative = SeedTimingUtil.calculateTargetCumulative(worldSeed, attempt);
+        this.cumulativeProbability = 0;
     }
 
-    public void recalculate(double newProbability) {
-        if (newProbability == lastProbability) return;
-        lastProbability = newProbability;
-        this.perTickProbability = newProbability;
-        this.delayTicks = SeedTimingUtil.calculateTicks(worldSeed, attempt, newProbability);
-        this.targetTick = startTick + delayTicks;
+    public void accumulate(double probability) {
+        this.perTickProbability = probability;
+        if (probability > 0) {
+            this.cumulativeProbability += probability;
+        }
+    }
+
+    public boolean isReadyToLight() {
+        return cumulativeProbability >= targetCumulative;
+    }
+
+    public void updateSubChunks(List<BlockPos> interiorBlocks, List<BlockPos> flammableBlocks, List<BlockPos> lavaBlocks) {
+        portalSubChunks.clear();
+        for (BlockPos pos : interiorBlocks) portalSubChunks.add(subChunkKey(pos));
+        for (BlockPos pos : flammableBlocks) portalSubChunks.add(subChunkKey(pos));
+        for (BlockPos pos : lavaBlocks) portalSubChunks.add(subChunkKey(pos));
+    }
+
+    private static long subChunkKey(BlockPos pos) {
+        return ChunkSectionPos.asLong(pos.getX() >> 4, pos.getY() >> 4, pos.getZ() >> 4);
     }
 
     public boolean matchesPortal(BlockPos otherCorner, Direction.Axis otherAxis) {

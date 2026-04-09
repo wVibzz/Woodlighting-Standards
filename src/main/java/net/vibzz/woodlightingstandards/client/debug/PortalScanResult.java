@@ -51,12 +51,16 @@ public class PortalScanResult {
         public int maxLavaZone = 0;
 
 
+        public boolean lit = false;
         public double perTickProbability = 0.0;
+        public double cumulativeProbability = 0.0;
+        public double targetCumulative = 0.0;
+        public int chunkCount = 0;
+        public int fireCount = 0;
+        public final Map<BlockPos, Long> scheduledFires = new LinkedHashMap<>();
+        public final Map<BlockPos, Long> scheduledBurnAway = new LinkedHashMap<>();
 
         public boolean timerActive = false;
-        public long timerTargetTick = 0;
-        public long timerStartTick = 0;
-        public int seedDerivedTicks = 0;
         public int attempt = 0;
     }
 
@@ -89,11 +93,11 @@ public class PortalScanResult {
                         long key = lc.asLong() ^ ((long) data.axis.ordinal() << 62);
                         if (!foundFrames.add(key)) continue;
 
-                        calculateBurnSlots(data);
-                        calculateLavaZone(data);
-
-
-                        scanSurroundings(world, data);
+                        if (!data.lit) {
+                            calculateBurnSlots(data);
+                            calculateLavaZone(data);
+                            scanSurroundings(world, data);
+                        }
 
                         portals.add(data);
                     }
@@ -103,6 +107,7 @@ public class PortalScanResult {
 
 
         for (PortalData pd : portals) {
+            if (pd.lit) continue;
             portalFrame.addAll(pd.frame);
             portalInterior.addAll(pd.interior);
             burnSlots.addAll(pd.burnSlots);
@@ -127,12 +132,16 @@ public class PortalScanResult {
         for (PortalData pd : portals) {
             PortalLightEntry entry = WoodlightTracker.getInstance().getEntryNear(serverWorld, pd.interior);
             if (entry != null) {
-                pd.timerActive = true;
-                pd.timerTargetTick = entry.targetTick;
-                pd.seedDerivedTicks = entry.delayTicks;
-                pd.timerStartTick = entry.startTick;
+                pd.timerActive = entry.perTickProbability > 0;
                 pd.attempt = entry.attempt;
                 pd.perTickProbability = entry.perTickProbability;
+                pd.cumulativeProbability = entry.cumulativeProbability;
+                pd.targetCumulative = entry.targetCumulative;
+                pd.chunkCount = entry.portalSubChunks.size();
+                pd.scheduledFires.clear();
+                pd.scheduledFires.putAll(entry.fireScheduler.getScheduledFires());
+                pd.scheduledBurnAway.clear();
+                pd.scheduledBurnAway.putAll(entry.fireScheduler.getScheduledBurnAway());
             } else {
                 pd.timerActive = false;
             }
@@ -188,11 +197,17 @@ public class PortalScanResult {
         PortalData data = new PortalData();
         data.axis = axis;
 
+        boolean allPortalBlocks = true;
         for (int x = 0; x < interiorW; x++) {
             for (int y = 0; y < interiorH; y++) {
-                data.interior.add(start.offset(horiz, x).up(y).toImmutable());
+                BlockPos interiorPos = start.offset(horiz, x).up(y).toImmutable();
+                data.interior.add(interiorPos);
+                if (!world.getBlockState(interiorPos).isOf(Blocks.NETHER_PORTAL)) {
+                    allPortalBlocks = false;
+                }
             }
         }
+        data.lit = allPortalBlocks;
         for (int x = 0; x < interiorW; x++) {
             data.frame.add(start.offset(horiz, x).down().toImmutable());
             data.frame.add(start.offset(horiz, x).up(interiorH).toImmutable());
@@ -276,10 +291,10 @@ public class PortalScanResult {
 
         for (BlockPos zonePos : data.lavaZone) {
             if (world.getFluidState(zonePos).isIn(FluidTags.LAVA)) {
-                lavaSources.add(zonePos);
                 for (BlockPos slot : data.filledBurnSlots) {
                     if (LavaReachUtil.canLavaReachSlot(world, zonePos, slot)) {
                         data.effectiveLava.add(zonePos);
+                        lavaSources.add(zonePos);
                         break;
                     }
                 }
@@ -287,15 +302,20 @@ public class PortalScanResult {
         }
 
 
-        for (BlockPos pos : data.interior) {
-            if (world.getBlockState(pos).isIn(BlockTags.FIRE)) {
-                fireBlocks.add(pos);
-            }
-        }
-
-        for (BlockPos pos : data.burnSlots) {
-            if (world.getBlockState(pos).isIn(BlockTags.FIRE)) {
-                fireBlocks.add(pos);
+        Set<BlockPos> scannedFire = new HashSet<>();
+        for (BlockPos interior : data.interior) {
+            for (int dx = -2; dx <= 2; dx++) {
+                for (int dy = -1; dy <= 2; dy++) {
+                    for (int dz = -2; dz <= 2; dz++) {
+                        BlockPos pos = interior.add(dx, dy, dz).toImmutable();
+                        if (scannedFire.contains(pos)) continue;
+                        scannedFire.add(pos);
+                        if (world.getBlockState(pos).isIn(BlockTags.FIRE)) {
+                            fireBlocks.add(pos);
+                            data.fireCount++;
+                        }
+                    }
+                }
             }
         }
     }

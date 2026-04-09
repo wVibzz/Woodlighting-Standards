@@ -6,7 +6,9 @@ import net.minecraft.block.NetherPortalBlock;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.tag.BlockTags;
+import net.minecraft.tag.FluidTags;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.ChunkSectionPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.registry.RegistryKey;
 import net.minecraft.world.World;
@@ -29,18 +31,28 @@ public class WoodlightTracker {
     private static final int SCAN_RADIUS = 12;
     private static final int SCAN_INTERVAL = 10;
 
+
     public static WoodlightTracker getInstance() {
         return INSTANCE;
     }
 
-    public boolean hasActiveTimer(ServerWorld world, BlockPos pos) {
+    /**
+     * Check if a chunk contains an active portal setup.
+     * Used by fire suppression mixins.
+     */
+    public boolean isPortalSubChunk(ServerWorld world, int sectionX, int sectionY, int sectionZ) {
         List<PortalLightEntry> entries = activeTimers.get(world.getRegistryKey());
         if (entries == null || entries.isEmpty()) return false;
 
-        NetherPortalBlock.AreaHelper helper = NetherPortalBlock.createAreaHelper(world, pos);
-        if (helper == null || !helper.isValid()) return false;
+        long key = ChunkSectionPos.asLong(sectionX, sectionY, sectionZ);
+        for (PortalLightEntry entry : entries) {
+            if (entry.portalSubChunks.contains(key)) return true;
+        }
+        return false;
+    }
 
-        return isTracked(world, helper);
+    public boolean isPortalSubChunk(ServerWorld world, BlockPos pos) {
+        return isPortalSubChunk(world, pos.getX() >> 4, pos.getY() >> 4, pos.getZ() >> 4);
     }
 
     public PortalLightEntry getEntryNear(ServerWorld world, Set<BlockPos> interiorPositions) {
@@ -79,6 +91,10 @@ public class WoodlightTracker {
             int currentDifficulty = world.getDifficulty().getId();
 
             for (PortalLightEntry entry : entries) {
+                if (!world.getChunkManager().isChunkLoaded(entry.probePos.getX() >> 4, entry.probePos.getZ() >> 4)) {
+                    continue;
+                }
+
                 NetherPortalBlock.AreaHelper helper = NetherPortalBlock.createAreaHelper(world, entry.probePos);
                 if (helper == null || !helper.isValid()) {
                     toRemove.add(entry);
@@ -86,14 +102,22 @@ public class WoodlightTracker {
                 }
 
                 List<BlockPos> interiorBlocks = getInteriorBlocks(helper);
-                double prob = PortalLightProbability.compute(world, interiorBlocks, currentDifficulty);
-                if (prob <= 0) {
+
+                // If the portal is already lit, drop the entry and skip processing
+                if (isPortalLit(world, interiorBlocks)) {
                     toRemove.add(entry);
                     continue;
                 }
-                entry.recalculate(prob);
 
-                if (currentTick >= entry.targetTick) {
+                entry.fireScheduler.tick(world, interiorBlocks, currentTick, currentDifficulty);
+
+                double prob = PortalLightProbability.compute(world, interiorBlocks, currentDifficulty);
+                entry.accumulate(prob);
+                entry.updateSubChunks(interiorBlocks,
+                        getFlammableNeighbors(world, interiorBlocks),
+                        getReachableLava(world, interiorBlocks));
+
+                if (entry.isReadyToLight()) {
                     helper.createPortal();
                     WoodlightPersistentState.get(world).commitAttempt();
                     toRemove.add(entry);
@@ -147,13 +171,17 @@ public class WoodlightTracker {
 
                         List<BlockPos> interiorBlocks = getInteriorBlocks(helper);
                         double prob = PortalLightProbability.compute(world, interiorBlocks, world.getDifficulty().getId());
-                        if (prob <= 0) continue;
 
                         int attempt = WoodlightPersistentState.get(world).peekNextAttempt();
 
                         PortalLightEntry entry = new PortalLightEntry(
                                 lowerCorner, foundAxis, above, attempt,
-                                world.getTime(), world.getSeed(), prob);
+                                world.getTime(), world.getSeed(), prob,
+                                helper.getWidth(), helper.getHeight());
+                        entry.updateSubChunks(interiorBlocks,
+                                getFlammableNeighbors(world, interiorBlocks),
+                                getReachableLava(world, interiorBlocks));
+                        entry.fireScheduler.clearPreExistingFires(world, interiorBlocks);
                         activeTimers.computeIfAbsent(world.getRegistryKey(), k -> new CopyOnWriteArrayList<>()).add(entry);
                         persistEntries(world);
                     }
@@ -193,6 +221,46 @@ public class WoodlightTracker {
             }
         }
         return result;
+    }
+
+    private List<BlockPos> getFlammableNeighbors(ServerWorld world, List<BlockPos> interiorBlocks) {
+        List<BlockPos> result = new ArrayList<>();
+        for (BlockPos pos : interiorBlocks) {
+            for (Direction dir : Direction.values()) {
+                BlockPos neighbor = pos.offset(dir);
+                if (world.getBlockState(neighbor).getMaterial().isBurnable()) {
+                    result.add(neighbor.toImmutable());
+                }
+            }
+        }
+        return result;
+    }
+
+    private List<BlockPos> getReachableLava(ServerWorld world, List<BlockPos> interiorBlocks) {
+        List<BlockPos> result = new ArrayList<>();
+        Set<BlockPos> seen = new HashSet<>();
+        for (BlockPos airPos : interiorBlocks) {
+            for (int dx = -3; dx <= 3; dx++) {
+                for (int dy = -3; dy <= 0; dy++) {
+                    for (int dz = -3; dz <= 3; dz++) {
+                        BlockPos checkPos = airPos.add(dx, dy, dz);
+                        if (seen.contains(checkPos)) continue;
+                        seen.add(checkPos);
+                        if (world.getFluidState(checkPos).isIn(FluidTags.LAVA)) {
+                            result.add(checkPos.toImmutable());
+                        }
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    private boolean isPortalLit(ServerWorld world, List<BlockPos> interiorBlocks) {
+        for (BlockPos pos : interiorBlocks) {
+            if (world.getBlockState(pos).isOf(net.minecraft.block.Blocks.NETHER_PORTAL)) return true;
+        }
+        return false;
     }
 
 }

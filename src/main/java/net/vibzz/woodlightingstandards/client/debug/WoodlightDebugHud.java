@@ -30,9 +30,18 @@ public class WoodlightDebugHud {
         // Calculate panel height
         int totalLines = 2; // header + seed
         for (PortalScanResult.PortalData pd : scan.portals) {
-            totalLines += 3; // portal header + burn slots + lava/fire
+            totalLines += 1; // portal header
+            if (pd.lit) {
+                totalLines += 1; // spacing only
+                continue;
+            }
+            totalLines += 2; // burn slots + prob/avg
+            if (!pd.scheduledFires.isEmpty() || !pd.scheduledBurnAway.isEmpty()) {
+                totalLines += 1;
+            }
+            totalLines += 1; // attempt/target
             if (pd.timerActive) {
-                totalLines += 5; // attempt + timer active + remaining + elapsed + bar
+                totalLines += 4; // timer active + progress + eta + bar
             } else {
                 totalLines += 2; // no timer + hint
             }
@@ -62,31 +71,43 @@ public class WoodlightDebugHud {
         y += lineH + 4;
 
 
-        long currentTick = 0;
-        if (mc.getServer() != null && mc.getServer().getOverworld() != null) {
-            currentTick = mc.getServer().getOverworld().getTime();
-        }
-
         for (int i = 0; i < scan.portals.size(); i++) {
             PortalScanResult.PortalData pd = scan.portals.get(i);
 
 
             String label = scan.portals.size() > 1 ? "Portal " + (i + 1) : "Portal";
+            String litTag = pd.lit ? " §a§l[LIT]" : "";
             text.drawWithShadow(matrices,
                     "§a" + label + "§r: " + pd.interior.size() + " interior"
-                            + " §7(" + pd.axis.getName() + " axis)",
+                            + " §7(" + pd.axis.getName() + " axis)"
+                            + (pd.chunkCount > 0 ? " §8[" + pd.chunkCount + " subchunks]" : "")
+                            + litTag,
                     x, y, 0xFFFFFF);
             y += lineH;
+
+            if (pd.lit) {
+                y += 4;
+                continue;
+            }
 
 
             int filled = pd.filledBurnSlots.size();
             int max = pd.maxBurnSlots;
             String burnColor = filled == 0 ? "§c" : filled == max ? "§a" : "§e";
+            String fireColor = pd.fireCount > 0 ? "§c" : "§7";
             text.drawWithShadow(matrices,
                     "Burn: " + burnColor + filled + "/" + max
-                            + "§r | Lava: §6" + pd.effectiveLava.size(),
+                            + "§r | Lava: §6" + pd.effectiveLava.size()
+                            + "§r | Fire: " + fireColor + pd.fireCount,
                     x, y, 0xFFFFFF);
             y += lineH;
+
+            if (!pd.scheduledFires.isEmpty() || !pd.scheduledBurnAway.isEmpty()) {
+                text.drawWithShadow(matrices,
+                        "Scheduled: §e" + pd.scheduledFires.size() + " fire§r | §6" + pd.scheduledBurnAway.size() + " burn",
+                        x, y, 0xFFFFFF);
+                y += lineH;
+            }
 
             String probColor = pd.perTickProbability > 0.005 ? "§a" : pd.perTickProbability > 0.001 ? "§e" : "§c";
             double expectedSec = pd.perTickProbability > 0 ? (1.0 / pd.perTickProbability) / 20.0 : 0;
@@ -97,48 +118,37 @@ public class WoodlightDebugHud {
             y += lineH;
 
 
+            text.drawWithShadow(matrices,
+                    String.format("Attempt #§b%d§r | Target: §b%.4f", pd.attempt, pd.targetCumulative),
+                    x, y, 0xFFFFFF);
+            y += lineH;
+
             if (pd.timerActive) {
-                double seedSeconds = pd.seedDerivedTicks / 20.0;
-                text.drawWithShadow(matrices,
-                        String.format("Attempt #§b%d§r: §b%d§r ticks (§b%.1f§rs)",
-                                pd.attempt, pd.seedDerivedTicks, seedSeconds), x, y, 0xFFFFFF);
+                double remainingProb = Math.max(0, pd.targetCumulative - pd.cumulativeProbability);
+                double etaSec = pd.perTickProbability > 0 ? (remainingProb / pd.perTickProbability) / 20.0 : 0;
+
+                text.drawWithShadow(matrices, "§a§lTIMER ACTIVE", x, y, 0x55FF55);
                 y += lineH;
 
-                long remaining = pd.timerTargetTick - currentTick;
-                long elapsed = currentTick - pd.timerStartTick;
+                text.drawWithShadow(matrices,
+                        String.format("Progress: §e%.4f§r / §b%.4f", pd.cumulativeProbability, pd.targetCumulative),
+                        x, y, 0xFFFFFF);
+                y += lineH;
 
-                if (remaining <= 0) {
-                    text.drawWithShadow(matrices, "§a§lPORTAL LIT!", x, y, 0x55FF55);
-                    y += lineH;
-                } else {
-                    double remainSec = remaining / 20.0;
-                    double totalSec = pd.seedDerivedTicks / 20.0;
-                    double elapsedSec = elapsed / 20.0;
+                text.drawWithShadow(matrices,
+                        String.format("ETA: §e%.1fs", etaSec), x, y, 0xFFFFFF);
+                y += lineH;
 
-                    text.drawWithShadow(matrices, "§a§lTIMER ACTIVE", x, y, 0x55FF55);
-                    y += lineH;
-
-                    text.drawWithShadow(matrices,
-                            String.format("Remaining: §e%.1f§rs / §b%.1f§rs",
-                                    remainSec, totalSec), x, y, 0xFFFFFF);
-                    y += lineH;
-
-                    text.drawWithShadow(matrices,
-                            String.format("Elapsed: §a%.1f§rs", elapsedSec), x, y, 0xFFFFFF);
-                    y += lineH;
-
-
-                    float progress = (float) elapsed / pd.seedDerivedTicks;
-                    progress = Math.max(0, Math.min(1, progress));
-                    int barW = 180;
-                    int barH = 6;
-                    int barY = y + 2;
-                    fill(matrices, x, barY, x + barW, barY + barH, 0xFF333333);
-                    int filledW = (int) (barW * progress);
-                    int barColor = progress < 0.5f ? 0xFF55FF55 : progress < 0.8f ? 0xFFFFFF55 : 0xFFFF5555;
-                    fill(matrices, x, barY, x + filledW, barY + barH, barColor);
-                    y += barH + 4;
-                }
+                float progress = (float) (pd.cumulativeProbability / pd.targetCumulative);
+                progress = Math.max(0, Math.min(1, progress));
+                int barW = 180;
+                int barH = 6;
+                int barY = y + 2;
+                fill(matrices, x, barY, x + barW, barY + barH, 0xFF333333);
+                int filledW = (int) (barW * progress);
+                int barColor = progress < 0.5f ? 0xFF55FF55 : progress < 0.8f ? 0xFFFFFF55 : 0xFFFF5555;
+                fill(matrices, x, barY, x + filledW, barY + barH, barColor);
+                y += barH + 4;
             } else {
                 text.drawWithShadow(matrices, "§7No active timer", x, y, 0xAAAAAA);
                 y += lineH;

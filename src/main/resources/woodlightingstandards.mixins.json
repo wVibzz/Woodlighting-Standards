@@ -6,6 +6,8 @@
   "mixins": [
     "AbstractFireBlockMixin",
     "AreaHelperAccessor",
+    "FireBlockMixin",
+    "LavaFluidMixin",
     "ServerWorldMixin"
   ],
   "client": [

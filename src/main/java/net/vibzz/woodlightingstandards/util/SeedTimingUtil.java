@@ -1,26 +1,15 @@
 package net.vibzz.woodlightingstandards.util;
 
-import net.vibzz.woodlightingstandards.WoodlightConfig;
-
 /**
- * Derives a deterministic woodlight delay from the world seed and
- * the vanilla-computed per-tick lighting probability.
+ * Derives a deterministic target cumulative probability from the world seed.
+ * The portal lights once the actual cumulative probability reaches this target.
  */
 public class SeedTimingUtil {
-    private static final double FALLBACK_LAMBDA = 0.06;
 
-    public static int calculateTicks(long seed, int attempt, double perTickProbability) {
+    public static double calculateTargetCumulative(long seed, int attempt) {
         long mixed = mixSeed(seed ^ mixSeed(attempt));
         double uniform = (double) (mixed & 0x7FFFFFFFFFFFFFFFL) / (double) Long.MAX_VALUE;
-
-        double ticks;
-        if (perTickProbability > 0) {
-            ticks = -Math.log(1.0 - uniform) / perTickProbability;
-        } else {
-            ticks = -Math.log(1.0 - uniform) / FALLBACK_LAMBDA * 20;
-        }
-
-        return Math.max(WoodlightConfig.MIN_SECONDS * 20, Math.min((int) ticks, WoodlightConfig.MAX_SECONDS * 20));
+        return -Math.log(1.0 - uniform);
     }
 
     private static long mixSeed(long seed) {
