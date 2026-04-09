@@ -73,19 +73,9 @@ public class WoodlightPersistentState extends PersistentState {
         PortalLightEntry entry = new PortalLightEntry(lowerCorner, axis, probePos, attempt, startTick, worldSeed, prob, portalWidth, portalHeight);
         entry.cumulativeProbability = cumulative;
 
-        Map<BlockPos, Long> fires = new HashMap<>();
-        ListTag fireList = entryTag.getList("ScheduledFires", 10);
-        for (int j = 0; j < fireList.size(); j++) {
-            CompoundTag ft = fireList.getCompound(j);
-            fires.put(new BlockPos(ft.getInt("X"), ft.getInt("Y"), ft.getInt("Z")), ft.getLong("T"));
-        }
-
-        Map<BlockPos, Long> burnAway = new HashMap<>();
-        ListTag burnList = entryTag.getList("ScheduledBurnAway", 10);
-        for (int j = 0; j < burnList.size(); j++) {
-            CompoundTag bt = burnList.getCompound(j);
-            burnAway.put(new BlockPos(bt.getInt("X"), bt.getInt("Y"), bt.getInt("Z")), bt.getLong("T"));
-        }
+        Map<BlockPos, Long> lavaFires = readBlockPosLongMap(entryTag, "ScheduledLavaFires");
+        Map<BlockPos, Long> spreadFires = readBlockPosLongMap(entryTag, "ScheduledSpreadFires");
+        Map<BlockPos, Long> burnAway = readBlockPosLongMap(entryTag, "ScheduledBurnAway");
 
         Map<Long, Integer> counters = new HashMap<>();
         ListTag counterList = entryTag.getList("PositionCounters", 10);
@@ -94,7 +84,7 @@ public class WoodlightPersistentState extends PersistentState {
             counters.put(ct.getLong("K"), ct.getInt("C"));
         }
 
-        entry.fireScheduler.loadState(fires, burnAway, counters);
+        entry.fireScheduler.loadState(lavaFires, spreadFires, burnAway, counters);
         return entry;
     }
 
@@ -114,27 +104,9 @@ public class WoodlightPersistentState extends PersistentState {
     private CompoundTag entryToTag(PortalLightEntry entry) {
         CompoundTag entryTag = writeEntryHeader(entry);
 
-        ListTag fireList = new ListTag();
-        for (Map.Entry<BlockPos, Long> fe : entry.fireScheduler.getScheduledFires().entrySet()) {
-            CompoundTag ft = new CompoundTag();
-            ft.putInt("X", fe.getKey().getX());
-            ft.putInt("Y", fe.getKey().getY());
-            ft.putInt("Z", fe.getKey().getZ());
-            ft.putLong("T", fe.getValue());
-            fireList.add(ft);
-        }
-        entryTag.put("ScheduledFires", fireList);
-
-        ListTag burnList = new ListTag();
-        for (Map.Entry<BlockPos, Long> be : entry.fireScheduler.getScheduledBurnAway().entrySet()) {
-            CompoundTag bt = new CompoundTag();
-            bt.putInt("X", be.getKey().getX());
-            bt.putInt("Y", be.getKey().getY());
-            bt.putInt("Z", be.getKey().getZ());
-            bt.putLong("T", be.getValue());
-            burnList.add(bt);
-        }
-        entryTag.put("ScheduledBurnAway", burnList);
+        entryTag.put("ScheduledLavaFires", writeBlockPosLongMap(entry.fireScheduler.getScheduledLavaFires()));
+        entryTag.put("ScheduledSpreadFires", writeBlockPosLongMap(entry.fireScheduler.getScheduledSpreadFires()));
+        entryTag.put("ScheduledBurnAway", writeBlockPosLongMap(entry.fireScheduler.getScheduledBurnAway()));
 
         ListTag counterList = new ListTag();
         for (Map.Entry<Long, Integer> ce : entry.fireScheduler.getPositionCounters().entrySet()) {
@@ -146,6 +118,29 @@ public class WoodlightPersistentState extends PersistentState {
         entryTag.put("PositionCounters", counterList);
 
         return entryTag;
+    }
+
+    private static Map<BlockPos, Long> readBlockPosLongMap(CompoundTag tag, String key) {
+        Map<BlockPos, Long> map = new HashMap<>();
+        ListTag list = tag.getList(key, 10);
+        for (int i = 0; i < list.size(); i++) {
+            CompoundTag t = list.getCompound(i);
+            map.put(new BlockPos(t.getInt("X"), t.getInt("Y"), t.getInt("Z")), t.getLong("T"));
+        }
+        return map;
+    }
+
+    private static ListTag writeBlockPosLongMap(Map<BlockPos, Long> map) {
+        ListTag list = new ListTag();
+        for (Map.Entry<BlockPos, Long> e : map.entrySet()) {
+            CompoundTag t = new CompoundTag();
+            t.putInt("X", e.getKey().getX());
+            t.putInt("Y", e.getKey().getY());
+            t.putInt("Z", e.getKey().getZ());
+            t.putLong("T", e.getValue());
+            list.add(t);
+        }
+        return list;
     }
 
     private static CompoundTag writeEntryHeader(PortalLightEntry entry) {

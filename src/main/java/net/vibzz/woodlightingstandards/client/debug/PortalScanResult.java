@@ -87,7 +87,8 @@ public class PortalScanResult {
             pd.cumulativeProbability = entry.cumulativeProbability;
             pd.targetCumulative = entry.targetCumulative;
             pd.chunkCount = entry.portalSubChunks.size();
-            pd.scheduledFires.putAll(entry.fireScheduler.getScheduledFires());
+            pd.scheduledFires.putAll(entry.fireScheduler.getScheduledLavaFires());
+            pd.scheduledFires.putAll(entry.fireScheduler.getScheduledSpreadFires());
             pd.scheduledBurnAway.putAll(entry.fireScheduler.getScheduledBurnAway());
 
             portals.add(pd);

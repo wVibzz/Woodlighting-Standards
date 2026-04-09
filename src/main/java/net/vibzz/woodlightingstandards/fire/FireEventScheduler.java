@@ -26,11 +26,14 @@ public class FireEventScheduler {
     private static final double LAVA_TICK_CHANCE = 6.0 / 4096.0;
     private static final double AVG_FIRE_TICK_INTERVAL = 34.5;
 
-    private final Map<BlockPos, Long> scheduledFires = new HashMap<>();
+    private final Map<BlockPos, Long> scheduledLavaFires = new HashMap<>();
+    private final Map<BlockPos, Long> scheduledSpreadFires = new HashMap<>();
     private final Map<BlockPos, Long> scheduledBurnAway = new HashMap<>();
     private final Map<Long, Integer> positionCounters = new HashMap<>();
+    private int lastDifficulty = -1;
 
-    public Map<BlockPos, Long> getScheduledFires() { return scheduledFires; }
+    public Map<BlockPos, Long> getScheduledLavaFires() { return scheduledLavaFires; }
+    public Map<BlockPos, Long> getScheduledSpreadFires() { return scheduledSpreadFires; }
     public Map<BlockPos, Long> getScheduledBurnAway() { return scheduledBurnAway; }
     public Map<Long, Integer> getPositionCounters() { return positionCounters; }
 
@@ -74,10 +77,30 @@ public class FireEventScheduler {
 
     public void tick(ServerWorld world, List<BlockPos> interiorBlocks, long currentTick, int difficulty) {
         Set<BlockPos> interiorSet = new HashSet<>(interiorBlocks);
+
+        if (lastDifficulty != -1 && lastDifficulty != difficulty) {
+            rescheduleSpreadFires(world, currentTick, difficulty);
+        }
+        lastDifficulty = difficulty;
+
         validateScheduled(world);
         scheduleLavaFires(world, interiorBlocks, interiorSet, currentTick);
-        processScheduledFires(world, interiorSet, currentTick, difficulty);
+        processScheduledLavaFires(world, interiorSet, currentTick, difficulty);
+        processScheduledSpreadFires(world, interiorSet, currentTick, difficulty);
         processScheduledBurnAway(world, interiorSet, currentTick, difficulty);
+    }
+
+    private void rescheduleSpreadFires(ServerWorld world, long currentTick, int newDifficulty) {
+        Map<BlockPos, Long> rescheduled = new HashMap<>();
+        for (Map.Entry<BlockPos, Long> entry : scheduledSpreadFires.entrySet()) {
+            BlockPos pos = entry.getKey();
+            double spreadProb = computeFireSpreadProbability(world, pos, newDifficulty);
+            if (spreadProb > 0) {
+                rescheduled.put(pos, currentTick + probabilityToTicks(spreadProb, pos));
+            }
+        }
+        scheduledSpreadFires.clear();
+        scheduledSpreadFires.putAll(rescheduled);
     }
 
     public void clearPreExistingFires(ServerWorld world, List<BlockPos> interiorBlocks) {
@@ -97,12 +120,14 @@ public class FireEventScheduler {
     }
 
     private void validateScheduled(ServerWorld world) {
-        scheduledFires.entrySet().removeIf(entry -> {
+        java.util.function.Predicate<Map.Entry<BlockPos, Long>> invalidFire = entry -> {
             BlockPos pos = entry.getKey();
             if (!world.getBlockState(pos).isAir()) return true;
             if (!hasBurnableNeighbor(world, pos)) return true;
             return !hasIgnitionSource(world, pos);
-        });
+        };
+        scheduledLavaFires.entrySet().removeIf(invalidFire);
+        scheduledSpreadFires.entrySet().removeIf(invalidFire);
 
         scheduledBurnAway.entrySet().removeIf(entry ->
                 !FlammableBlockUtil.isFlammable(world.getBlockState(entry.getKey())));
@@ -131,14 +156,14 @@ public class FireEventScheduler {
         List<BlockPos> fireTargets = findLavaFireTargets(world, interiorBlocks, interiorSet);
 
         for (BlockPos target : fireTargets) {
-            if (scheduledFires.containsKey(target)) continue;
+            if (scheduledLavaFires.containsKey(target) || scheduledSpreadFires.containsKey(target)) continue;
             if (!world.getBlockState(target).isAir()) continue;
 
             double prob = computeTargetProbability(world, target);
             if (prob <= 0) continue;
 
             long fireTick = currentTick + probabilityToTicks(prob, target);
-            scheduledFires.put(target.toImmutable(), fireTick);
+            scheduledLavaFires.put(target.toImmutable(), fireTick);
         }
     }
 
@@ -183,9 +208,17 @@ public class FireEventScheduler {
         return prob;
     }
 
-    private void processScheduledFires(ServerWorld world, Set<BlockPos> interiorSet, long currentTick, int difficulty) {
+    private void processScheduledLavaFires(ServerWorld world, Set<BlockPos> interiorSet, long currentTick, int difficulty) {
+        processFireMap(scheduledLavaFires, world, interiorSet, currentTick, difficulty);
+    }
+
+    private void processScheduledSpreadFires(ServerWorld world, Set<BlockPos> interiorSet, long currentTick, int difficulty) {
+        processFireMap(scheduledSpreadFires, world, interiorSet, currentTick, difficulty);
+    }
+
+    private void processFireMap(Map<BlockPos, Long> map, ServerWorld world, Set<BlockPos> interiorSet, long currentTick, int difficulty) {
         List<BlockPos> placed = new ArrayList<>();
-        Iterator<Map.Entry<BlockPos, Long>> iter = scheduledFires.entrySet().iterator();
+        Iterator<Map.Entry<BlockPos, Long>> iter = map.entrySet().iterator();
         while (iter.hasNext()) {
             Map.Entry<BlockPos, Long> entry = iter.next();
             if (currentTick < entry.getValue()) continue;
@@ -237,11 +270,12 @@ public class FireEventScheduler {
                 }
             }
 
-            if (neighborState.isAir() && hasBurnableNeighbor(world, neighbor) && !scheduledFires.containsKey(neighbor)) {
+            if (neighborState.isAir() && hasBurnableNeighbor(world, neighbor)
+                    && !scheduledLavaFires.containsKey(neighbor) && !scheduledSpreadFires.containsKey(neighbor)) {
                 double spreadProb = computeFireSpreadProbability(world, neighbor, difficulty);
                 if (spreadProb > 0) {
                     long spreadTick = currentTick + probabilityToTicks(spreadProb, neighbor);
-                    scheduledFires.put(neighbor.toImmutable(), spreadTick);
+                    scheduledSpreadFires.put(neighbor.toImmutable(), spreadTick);
                 }
             }
         }
@@ -273,9 +307,12 @@ public class FireEventScheduler {
         return Math.max(1, (int) (-Math.log(1.0 - uniform) * expectedTicks));
     }
 
-    public void loadState(Map<BlockPos, Long> fires, Map<BlockPos, Long> burnAway, Map<Long, Integer> counters) {
-        scheduledFires.clear();
-        scheduledFires.putAll(fires);
+    public void loadState(Map<BlockPos, Long> lavaFires, Map<BlockPos, Long> spreadFires,
+                          Map<BlockPos, Long> burnAway, Map<Long, Integer> counters) {
+        scheduledLavaFires.clear();
+        scheduledLavaFires.putAll(lavaFires);
+        scheduledSpreadFires.clear();
+        scheduledSpreadFires.putAll(spreadFires);
         scheduledBurnAway.clear();
         scheduledBurnAway.putAll(burnAway);
         positionCounters.clear();
