@@ -10,9 +10,7 @@
 - Persistence across save/load
 - Fire suppression in portal subchunks (prevents vanilla RNG interference)
 - Biome humidity not factored in
-
-### WIP
-- Difficulty modifier currently has no effect
+- Difficulty for fire spread
 
 ### Credits
 @ClearColdWater - w/ testing and feedback
