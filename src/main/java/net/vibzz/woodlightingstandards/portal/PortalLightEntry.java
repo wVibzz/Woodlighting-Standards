@@ -6,9 +6,10 @@ import net.minecraft.util.math.Direction;
 import net.vibzz.woodlightingstandards.fire.FireEventScheduler;
 import net.vibzz.woodlightingstandards.util.SeedTimingUtil;
 
-import java.util.HashSet;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class PortalLightEntry {
     public final BlockPos lowerCorner;
@@ -19,12 +20,20 @@ public class PortalLightEntry {
     public final long worldSeed;
     public final int portalWidth;
     public final int portalHeight;
-    public final Set<Long> portalSubChunks;
+    public final Set<Long> portalSubChunks = ConcurrentHashMap.newKeySet();
     public final FireEventScheduler fireScheduler;
 
     public final double targetCumulative;
-    public double cumulativeProbability;
-    public double perTickProbability;
+    public volatile double cumulativeProbability;
+    public volatile double perTickProbability;
+    public volatile boolean lit;
+
+    public volatile List<BlockPos> cachedInterior = new ArrayList<>();
+    public volatile List<BlockPos> cachedFrame = new ArrayList<>();
+    public volatile List<BlockPos> cachedFlammable = new ArrayList<>();
+    public volatile List<BlockPos> cachedLava = new ArrayList<>();
+    public volatile int cachedFireCount;
+    public volatile List<BlockPos> cachedFirePositions = new ArrayList<>();
 
     public PortalLightEntry(BlockPos lowerCorner, Direction.Axis axis, BlockPos probePos,
                             int attempt, long startTick, long worldSeed, double perTickProbability,
@@ -38,7 +47,6 @@ public class PortalLightEntry {
         this.portalWidth = portalWidth;
         this.portalHeight = portalHeight;
         this.perTickProbability = perTickProbability;
-        this.portalSubChunks = new HashSet<>();
         this.fireScheduler = new FireEventScheduler(worldSeed, attempt, lowerCorner, axis, portalWidth);
         this.targetCumulative = SeedTimingUtil.calculateTargetCumulative(worldSeed, attempt);
         this.cumulativeProbability = 0;

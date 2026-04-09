@@ -47,9 +47,6 @@ public class WoodlightingstandardsClient implements ClientModInitializer {
         return WoodlightBuildConfig.DEBUG && debugVisible;
     }
 
-    private static int rescanCounter = 0;
-    private static final int RESCAN_INTERVAL = 10;
-
     public static void onClientTick(MinecraftClient client) {
         if (!WoodlightBuildConfig.DEBUG) return;
 
@@ -58,25 +55,12 @@ public class WoodlightingstandardsClient implements ClientModInitializer {
         if (client.world == null || client.player == null) return;
 
         if (scanKey.wasPressed()) {
-            if (debugVisible) {
-                SCAN_RESULT.clear();
-                debugVisible = false;
-            } else {
-                SCAN_RESULT.scan(client.world, client.player.getBlockPos(), 8);
-                debugVisible = true;
-            }
+            debugVisible = !debugVisible;
+            if (!debugVisible) SCAN_RESULT.clear();
         }
 
         if (debugVisible) {
-            rescanCounter++;
-            if (rescanCounter >= RESCAN_INTERVAL) {
-                rescanCounter = 0;
-                SCAN_RESULT.scan(client.world, client.player.getBlockPos(), 8);
-            }
-
-            if (SCAN_RESULT.hasResults && !SCAN_RESULT.portals.isEmpty()) {
-                SCAN_RESULT.updateTimerInfo();
-            }
+            SCAN_RESULT.update();
         }
     }
 }

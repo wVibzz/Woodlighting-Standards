@@ -8,7 +8,7 @@ public class SeedTimingUtil {
 
     public static double calculateTargetCumulative(long seed, int attempt) {
         long mixed = mixSeed(seed ^ mixSeed(attempt));
-        double uniform = (double) (mixed & 0x7FFFFFFFFFFFFFFFL) / (double) Long.MAX_VALUE;
+        double uniform = (double) (mixed & 0x7FFFFFFFFFFFFFFFL) / ((double) Long.MAX_VALUE + 1.0);
         return -Math.log(1.0 - uniform);
     }
 
