@@ -13,4 +13,4 @@
 - Difficulty for fire spread
 
 ### Credits
-@ClearColdWater - w/ testing and feedback
+@ClearColdWater & __VY__ - w/ testing and feedback
