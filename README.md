@@ -1,14 +1,18 @@
-## Currently Solved RNG:
-- Seed-deterministic portal light time.
-- Difficulty modifier based on seed base time.
-- Setup quality score.
-- Lava coverage score.
-- Exact vanilla lava walk pathing checks.
-- Vanilla flammable block registry checks.
-- Biome humidity not factored in.
-### Known Issues
-- Fire chain spread (fire → fire → portal) not solved
+### Currently Solved RNG:
+- Seed-deterministic portal light time via cumulative probability
+- Vanilla per-tick probability math (not arbitrary scoring)
+- Exact vanilla lava walk pathing checks
+- Vanilla flammable block registry checks
+- Deterministic fire placement from lava (seed-derived timing)
+- Deterministic fire spread (lava → fire → fire → portal)
+- Deterministic block burn-away timing
+- Canonical position keys (same setup mirrored/rotated produces identical fire timing to reduce incosistancies with same setup but different sides of lava pools)
+- Persistence across save/load
+- Fire suppression in portal subchunks (prevents vanilla RNG interference)
+- Biome humidity not factored in
 
+### WIP
+- Difficulty modifier currently has no effect
 
 ### Credits
 @ClearColdWater - w/ testing and feedback
