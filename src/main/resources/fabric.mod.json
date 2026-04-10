@@ -17,6 +17,7 @@
       "net.vibzz.woodlightingstandards.Woodlightingstandards"
     ]
   },
+  "accessWidener": "woodlightingstandards.accesswidener",
   "mixins": [
     "woodlightingstandards.mixins.json"
   ],

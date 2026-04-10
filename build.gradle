@@ -10,6 +10,10 @@ base {
     archivesName = project.archives_base_name
 }
 
+loom {
+    accessWidenerPath = file("src/main/resources/woodlightingstandards.accesswidener")
+}
+
 repositories {
 }
 
@@ -48,7 +52,7 @@ java {
     // withSourcesJar() — disabled, not needed for distribution
 }
 
-// === Default build produces the DEBUG jar (DEBUG = true in source) ===
+// Default build produces the DEBUG jar (DEBUG = true in source)
 jar {
     from("LICENSE") {
         rename { "${it}_${project.archives_base_name}" }
@@ -60,7 +64,7 @@ remapJar {
     archiveClassifier = 'DEBUG'
 }
 
-// === Release jar: recompile with DEBUG = false, then remap ===
+// Release jar: recompile with DEBUG = false, then remap
 
 def configFile = file("src/main/java/net/vibzz/woodlightingstandards/WoodlightBuildConfig.java")
 

@@ -12,6 +12,7 @@ import net.minecraft.util.math.ChunkSectionPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.registry.RegistryKey;
 import net.minecraft.world.World;
+import net.vibzz.woodlightingstandards.Woodlightingstandards;
 import net.vibzz.woodlightingstandards.mixin.AreaHelperAccessor;
 import net.vibzz.woodlightingstandards.util.PortalLightProbability;
 
@@ -55,7 +56,13 @@ public class WoodlightTracker {
         return isPortalSubChunk(world, pos.getX() >> 4, pos.getY() >> 4, pos.getZ() >> 4);
     }
 
+    public boolean isEnabled(ServerWorld world) {
+        return world.getGameRules().getBoolean(Woodlightingstandards.STANDARDIZE_WOODLIGHT);
+    }
+
     public void tick(ServerWorld world) {
+        if (!isEnabled(world)) return;
+
         if (loadedWorlds.add(world.getRegistryKey())) {
             WoodlightPersistentState state = WoodlightPersistentState.get(world);
             List<PortalLightEntry> saved = state.getSavedEntries();

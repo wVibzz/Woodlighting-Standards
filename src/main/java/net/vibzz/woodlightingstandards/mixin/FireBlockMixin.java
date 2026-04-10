@@ -17,7 +17,8 @@ public class FireBlockMixin {
 
     @Inject(method = "scheduledTick", at = @At("HEAD"), cancellable = true)
     private void suppressFireSpreadInPortalSubChunk(BlockState state, ServerWorld world, BlockPos pos, Random random, CallbackInfo ci) {
-        if (WoodlightTracker.getInstance().isPortalSubChunk(world, pos)) {
+        WoodlightTracker tracker = WoodlightTracker.getInstance();
+        if (tracker.isEnabled(world) && tracker.isPortalSubChunk(world, pos)) {
             ci.cancel();
         }
     }

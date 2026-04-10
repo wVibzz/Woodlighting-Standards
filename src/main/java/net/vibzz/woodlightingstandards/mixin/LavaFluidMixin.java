@@ -19,7 +19,9 @@ public class LavaFluidMixin {
     @Inject(method = "onRandomTick", at = @At("HEAD"), cancellable = true)
     private void suppressLavaFireInPortalSubChunk(World world, BlockPos pos, FluidState state, Random random, CallbackInfo ci) {
         if (world instanceof ServerWorld) {
-            if (WoodlightTracker.getInstance().isPortalSubChunk((ServerWorld) world, pos)) {
+            ServerWorld serverWorld = (ServerWorld) world;
+            WoodlightTracker tracker = WoodlightTracker.getInstance();
+            if (tracker.isEnabled(serverWorld) && tracker.isPortalSubChunk(serverWorld, pos)) {
                 ci.cancel();
             }
         }
