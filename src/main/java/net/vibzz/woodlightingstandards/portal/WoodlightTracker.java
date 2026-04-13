@@ -375,6 +375,7 @@ public class WoodlightTracker {
         int portalChunkX = pos.getX() >> 4;
         int portalChunkZ = pos.getZ() >> 4;
         for (ServerPlayerEntity player : world.getPlayers()) {
+            if (player.isSpectator()) continue;
             int playerChunkX = player.getBlockPos().getX() >> 4;
             int playerChunkZ = player.getBlockPos().getZ() >> 4;
             if (Math.abs(portalChunkX - playerChunkX) <= viewDist
