@@ -34,7 +34,6 @@ public class LavaWeightUtil {
         if (dy != 1) return 0;
         if (dx < -1 || dx > 1 || dz < -1 || dz > 1) return 0;
 
-        // blockPos2 = lava.add(dx, 0, dz) — check if THAT block is burnable
         BlockPos blockPos2 = lavaPos.add(dx, 0, dz);
         if (!world.getBlockState(blockPos2).getMaterial().isBurnable()) return 0;
 

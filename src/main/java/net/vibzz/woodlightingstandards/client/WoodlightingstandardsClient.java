@@ -5,7 +5,6 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.options.KeyBinding;
 import net.minecraft.client.util.InputUtil;
 import net.vibzz.woodlightingstandards.WoodlightBuildConfig;
-import net.vibzz.woodlightingstandards.Woodlightingstandards;
 import net.vibzz.woodlightingstandards.client.debug.PortalScanResult;
 import net.vibzz.woodlightingstandards.mixin.client.GameOptionsAccessor;
 import org.lwjgl.glfw.GLFW;
@@ -45,13 +44,7 @@ public class WoodlightingstandardsClient implements ClientModInitializer {
     }
 
     public static boolean isDebugVisible() {
-        return WoodlightBuildConfig.DEBUG && debugVisible && isGameruleEnabled();
-    }
-
-    private static boolean isGameruleEnabled() {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc.getServer() == null || mc.getServer().getOverworld() == null) return false;
-        return mc.getServer().getOverworld().getGameRules().getBoolean(Woodlightingstandards.STANDARDIZE_WOODLIGHT);
+        return WoodlightBuildConfig.DEBUG && debugVisible;
     }
 
     public static void onClientTick(MinecraftClient client) {
@@ -60,14 +53,6 @@ public class WoodlightingstandardsClient implements ClientModInitializer {
         ensureKeysRegistered();
 
         if (client.world == null || client.player == null) return;
-
-        if (!isGameruleEnabled()) {
-            if (debugVisible) {
-                SCAN_RESULT.clear();
-                debugVisible = false;
-            }
-            return;
-        }
 
         if (scanKey.wasPressed()) {
             debugVisible = !debugVisible;

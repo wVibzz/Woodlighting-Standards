@@ -3,11 +3,10 @@ package net.vibzz.woodlightingstandards.portal;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkSectionPos;
 import net.minecraft.util.math.Direction;
-import net.vibzz.woodlightingstandards.fire.FireEventScheduler;
-import net.vibzz.woodlightingstandards.util.SeedTimingUtil;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -21,16 +20,14 @@ public class PortalLightEntry {
     public final int portalWidth;
     public final int portalHeight;
     public final Set<Long> portalSubChunks = ConcurrentHashMap.newKeySet();
-    public final FireEventScheduler fireScheduler;
-
-    public final double targetCumulative;
-    public volatile double cumulativeProbability;
+    public volatile double cumulativeContribution;
     public volatile double perTickProbability;
     public volatile boolean lit;
-
+    public final Map<BlockPos, Long> pendingExtinguish = new ConcurrentHashMap<>();
     public volatile List<BlockPos> cachedInterior = new ArrayList<>();
     public volatile List<BlockPos> cachedFrame = new ArrayList<>();
     public volatile List<BlockPos> cachedFlammable = new ArrayList<>();
+    public volatile List<BlockPos> cachedZoneFlammable = new ArrayList<>();
     public volatile List<BlockPos> cachedLava = new ArrayList<>();
     public volatile int cachedFireCount;
     public volatile List<BlockPos> cachedFirePositions = new ArrayList<>();
@@ -47,20 +44,14 @@ public class PortalLightEntry {
         this.portalWidth = portalWidth;
         this.portalHeight = portalHeight;
         this.perTickProbability = perTickProbability;
-        this.fireScheduler = new FireEventScheduler(worldSeed, attempt, lowerCorner, axis, portalWidth);
-        this.targetCumulative = SeedTimingUtil.calculateTargetCumulative(worldSeed, attempt);
-        this.cumulativeProbability = 0;
+        this.cumulativeContribution = 0;
     }
 
     public void accumulate(double probability) {
         this.perTickProbability = probability;
         if (probability > 0) {
-            this.cumulativeProbability += probability;
+            this.cumulativeContribution += probability;
         }
-    }
-
-    public boolean isReadyToLight() {
-        return cumulativeProbability >= targetCumulative;
     }
 
     public void updateSubChunks(List<BlockPos> interiorBlocks, List<BlockPos> flammableBlocks, List<BlockPos> lavaBlocks) {

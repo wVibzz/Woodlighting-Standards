@@ -8,9 +8,7 @@ import net.minecraft.util.math.Direction;
 import net.minecraft.world.PersistentState;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 public class WoodlightPersistentState extends PersistentState {
     private static final String ID = "wls";
@@ -71,20 +69,7 @@ public class WoodlightPersistentState extends PersistentState {
         int portalHeight = entryTag.getInt("PortalHeight");
 
         PortalLightEntry entry = new PortalLightEntry(lowerCorner, axis, probePos, attempt, startTick, worldSeed, prob, portalWidth, portalHeight);
-        entry.cumulativeProbability = cumulative;
-
-        Map<BlockPos, Long> lavaFires = readBlockPosLongMap(entryTag, "ScheduledLavaFires");
-        Map<BlockPos, Long> spreadFires = readBlockPosLongMap(entryTag, "ScheduledSpreadFires");
-        Map<BlockPos, Long> burnAway = readBlockPosLongMap(entryTag, "ScheduledBurnAway");
-
-        Map<Long, Integer> counters = new HashMap<>();
-        ListTag counterList = entryTag.getList("PositionCounters", 10);
-        for (int j = 0; j < counterList.size(); j++) {
-            CompoundTag ct = counterList.getCompound(j);
-            counters.put(ct.getLong("K"), ct.getInt("C"));
-        }
-
-        entry.fireScheduler.loadState(lavaFires, spreadFires, burnAway, counters);
+        entry.cumulativeContribution = cumulative;
         return entry;
     }
 
@@ -102,45 +87,7 @@ public class WoodlightPersistentState extends PersistentState {
     }
 
     private CompoundTag entryToTag(PortalLightEntry entry) {
-        CompoundTag entryTag = writeEntryHeader(entry);
-
-        entryTag.put("ScheduledLavaFires", writeBlockPosLongMap(entry.fireScheduler.getScheduledLavaFires()));
-        entryTag.put("ScheduledSpreadFires", writeBlockPosLongMap(entry.fireScheduler.getScheduledSpreadFires()));
-        entryTag.put("ScheduledBurnAway", writeBlockPosLongMap(entry.fireScheduler.getScheduledBurnAway()));
-
-        ListTag counterList = new ListTag();
-        for (Map.Entry<Long, Integer> ce : entry.fireScheduler.getPositionCounters().entrySet()) {
-            CompoundTag ct = new CompoundTag();
-            ct.putLong("K", ce.getKey());
-            ct.putInt("C", ce.getValue());
-            counterList.add(ct);
-        }
-        entryTag.put("PositionCounters", counterList);
-
-        return entryTag;
-    }
-
-    private static Map<BlockPos, Long> readBlockPosLongMap(CompoundTag tag, String key) {
-        Map<BlockPos, Long> map = new HashMap<>();
-        ListTag list = tag.getList(key, 10);
-        for (int i = 0; i < list.size(); i++) {
-            CompoundTag t = list.getCompound(i);
-            map.put(new BlockPos(t.getInt("X"), t.getInt("Y"), t.getInt("Z")), t.getLong("T"));
-        }
-        return map;
-    }
-
-    private static ListTag writeBlockPosLongMap(Map<BlockPos, Long> map) {
-        ListTag list = new ListTag();
-        for (Map.Entry<BlockPos, Long> e : map.entrySet()) {
-            CompoundTag t = new CompoundTag();
-            t.putInt("X", e.getKey().getX());
-            t.putInt("Y", e.getKey().getY());
-            t.putInt("Z", e.getKey().getZ());
-            t.putLong("T", e.getValue());
-            list.add(t);
-        }
-        return list;
+        return writeEntryHeader(entry);
     }
 
     private static CompoundTag writeEntryHeader(PortalLightEntry entry) {
@@ -156,7 +103,7 @@ public class WoodlightPersistentState extends PersistentState {
         entryTag.putLong("StartTick", entry.startTick);
         entryTag.putLong("WorldSeed", entry.worldSeed);
         entryTag.putDouble("Probability", entry.perTickProbability);
-        entryTag.putDouble("Cumulative", entry.cumulativeProbability);
+        entryTag.putDouble("Cumulative", entry.cumulativeContribution);
         entryTag.putInt("PortalWidth", entry.portalWidth);
         entryTag.putInt("PortalHeight", entry.portalHeight);
         return entryTag;

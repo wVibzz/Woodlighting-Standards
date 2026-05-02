@@ -4,26 +4,26 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
+import net.vibzz.woodlightingstandards.Woodlightingstandards;
+import net.vibzz.woodlightingstandards.portal.PortalGroup;
 import net.vibzz.woodlightingstandards.portal.PortalLightEntry;
 import net.vibzz.woodlightingstandards.portal.WoodlightTracker;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * Reads portal data from server-side entries for debug display.
- * No client-side world scanning.
- */
 public class PortalScanResult {
     public boolean hasResults = false;
+    public boolean gameruleEnabled = true;
+    public boolean serverAvailable = false;
     public final List<PortalData> portals = new ArrayList<>();
     public long worldSeed = 0;
 
-    // Aggregated for overlay rendering
     public final List<BlockPos> portalFrame = new ArrayList<>();
     public final Set<BlockPos> portalInterior = new HashSet<>();
     public final Set<BlockPos> filledBurnSlots = new HashSet<>();
@@ -50,23 +50,43 @@ public class PortalScanResult {
 
         public boolean timerActive = false;
         public int attempt = 0;
+        public int groupSize = 1;
+        public long groupKey = 0;
     }
 
     public void update() {
         clear();
 
         MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc.getServer() == null) return;
+        if (mc.getServer() == null) {
+            hasResults = true;
+            serverAvailable = false;
+            return;
+        }
 
         ServerWorld serverWorld = mc.getServer().getOverworld();
-        if (serverWorld == null) return;
+        if (serverWorld == null) {
+            hasResults = true;
+            serverAvailable = false;
+            return;
+        }
 
+        serverAvailable = true;
+        gameruleEnabled = serverWorld.getGameRules().getBoolean(Woodlightingstandards.STANDARDIZE_WOODLIGHT);
         worldSeed = serverWorld.getSeed();
 
         List<PortalLightEntry> entries = WoodlightTracker.getInstance().getAllEntries(serverWorld);
         if (entries == null || entries.isEmpty()) {
             hasResults = true;
             return;
+        }
+
+        Map<PortalLightEntry, PortalGroup> entryToGroup = new HashMap<>();
+        Map<Long, PortalGroup> groupMap = WoodlightTracker.getInstance().getActiveGroups(serverWorld);
+        if (groupMap != null) {
+            for (PortalGroup g : groupMap.values()) {
+                for (PortalLightEntry m : g.members) entryToGroup.put(m, g);
+            }
         }
 
         for (PortalLightEntry entry : entries) {
@@ -84,12 +104,23 @@ public class PortalScanResult {
             pd.timerActive = entry.perTickProbability > 0;
             pd.attempt = entry.attempt;
             pd.perTickProbability = entry.perTickProbability;
-            pd.cumulativeProbability = entry.cumulativeProbability;
-            pd.targetCumulative = entry.targetCumulative;
             pd.chunkCount = entry.portalSubChunks.size();
-            pd.scheduledFires.putAll(entry.fireScheduler.getScheduledLavaFires());
-            pd.scheduledFires.putAll(entry.fireScheduler.getScheduledSpreadFires());
-            pd.scheduledBurnAway.putAll(entry.fireScheduler.getScheduledBurnAway());
+
+            PortalGroup group = entryToGroup.get(entry);
+            if (group != null) {
+                pd.cumulativeProbability = group.getCumulativeProbability();
+                pd.targetCumulative = group.targetCumulative;
+                pd.groupSize = group.members.size();
+                pd.groupKey = group.memberKey;
+                pd.scheduledFires.putAll(group.scheduler.getScheduledLavaFires());
+                pd.scheduledFires.putAll(group.scheduler.getScheduledSpreadFires());
+                pd.scheduledBurnAway.putAll(group.scheduler.getScheduledBurnAway());
+            } else {
+                pd.cumulativeProbability = entry.cumulativeContribution;
+                pd.targetCumulative = 0;
+                pd.groupSize = 1;
+                pd.groupKey = 0;
+            }
 
             portals.add(pd);
 
@@ -107,6 +138,8 @@ public class PortalScanResult {
 
     public void clear() {
         hasResults = false;
+        gameruleEnabled = true;
+        serverAvailable = false;
         portals.clear();
         portalFrame.clear();
         portalInterior.clear();

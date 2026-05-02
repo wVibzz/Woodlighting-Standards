@@ -6,24 +6,27 @@ import net.minecraft.tag.BlockTags;
 import net.minecraft.tag.FluidTags;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
-import java.util.List;
 
-/**
- * Computes the per-tick probability of a portal lighting from direct
- * lava fire generation and fire block spread.
- */
+import java.util.Collections;
+import java.util.List;
+import java.util.Set;
+
 public class PortalLightProbability {
 
     private static final double LAVA_TICK_CHANCE = 6.0 / 4096.0;
     private static final double AVG_FIRE_TICK_INTERVAL = 34.5;
 
     public static double compute(ServerWorld world, List<BlockPos> interiorBlocks, int difficulty) {
+        return compute(world, interiorBlocks, difficulty, Collections.emptySet());
+    }
+
+    public static double compute(ServerWorld world, List<BlockPos> interiorBlocks, int difficulty, Set<BlockPos> excludeFires) {
         double survivalProb = 1.0;
 
         for (BlockPos airPos : interiorBlocks) {
             double airBlockProb = 0;
             airBlockProb += computeLavaContribution(world, airPos);
-            airBlockProb += computeFireSpreadContribution(world, airPos, difficulty);
+            airBlockProb += computeFireSpreadContribution(world, airPos, difficulty, excludeFires);
 
             if (airBlockProb > 0) {
                 survivalProb *= (1.0 - Math.min(1.0, airBlockProb));
@@ -54,7 +57,7 @@ public class PortalLightProbability {
         return prob;
     }
 
-    private static double computeFireSpreadContribution(ServerWorld world, BlockPos airPos, int difficulty) {
+    private static double computeFireSpreadContribution(ServerWorld world, BlockPos airPos, int difficulty, Set<BlockPos> excludeFires) {
         int maxBurn = 0;
         for (Direction dir : Direction.values()) {
             int burn = FlammableBlockUtil.getBurnChance(world.getBlockState(airPos.offset(dir)));
@@ -72,6 +75,7 @@ public class PortalLightProbability {
                     BlockPos firePos = airPos.add(l, n, m);
                     BlockState fireState = world.getBlockState(firePos);
                     if (!fireState.isIn(BlockTags.FIRE)) continue;
+                    if (!excludeFires.isEmpty() && excludeFires.contains(firePos)) continue;
 
                     int o = 100;
                     if (n > 1) o += (n - 1) * 100;

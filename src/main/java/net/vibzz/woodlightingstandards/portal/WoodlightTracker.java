@@ -17,7 +17,10 @@ import net.vibzz.woodlightingstandards.mixin.AreaHelperAccessor;
 import net.vibzz.woodlightingstandards.util.PortalLightProbability;
 
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -27,6 +30,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public class WoodlightTracker {
     private static final WoodlightTracker INSTANCE = new WoodlightTracker();
     private final Map<RegistryKey<World>, CopyOnWriteArrayList<PortalLightEntry>> activeTimers = new ConcurrentHashMap<>();
+    private final Map<RegistryKey<World>, Map<Long, PortalGroup>> activeGroups = new ConcurrentHashMap<>();
     private final Set<RegistryKey<World>> loadedWorlds = ConcurrentHashMap.newKeySet();
 
     private static final int SCAN_RADIUS = 12;
@@ -56,6 +60,10 @@ public class WoodlightTracker {
         return isPortalSubChunk(world, pos.getX() >> 4, pos.getY() >> 4, pos.getZ() >> 4);
     }
 
+    public Map<Long, PortalGroup> getActiveGroups(ServerWorld world) {
+        return activeGroups.get(world.getRegistryKey());
+    }
+
     public boolean isEnabled(ServerWorld world) {
         return world.getGameRules().getBoolean(Woodlightingstandards.STANDARDIZE_WOODLIGHT);
     }
@@ -74,8 +82,9 @@ public class WoodlightTracker {
         CopyOnWriteArrayList<PortalLightEntry> entries = activeTimers.get(world.getRegistryKey());
         if (entries != null && !entries.isEmpty()) {
             long currentTick = world.getTime();
-            List<PortalLightEntry> toRemove = new ArrayList<>();
             int currentDifficulty = world.getDifficulty().getId();
+            List<PortalLightEntry> toRemove = new ArrayList<>();
+            List<PortalLightEntry> activeEntries = new ArrayList<>();
 
             for (PortalLightEntry entry : entries) {
                 if (!world.getChunkManager().isChunkLoaded(entry.probePos.getX() >> 4, entry.probePos.getZ() >> 4)) {
@@ -94,7 +103,13 @@ public class WoodlightTracker {
 
                 NetherPortalBlock.AreaHelper helper = NetherPortalBlock.createAreaHelper(world, entry.probePos);
                 if (helper == null || !helper.isValid()) {
-                    toRemove.add(entry);
+                    if (isInteriorAllPortalBlocks(world, entry)) {
+                        entry.lit = true;
+                        continue;
+                    }
+                    if (!isObsidianFrameIntact(world, entry)) {
+                        toRemove.add(entry);
+                    }
                     continue;
                 }
 
@@ -107,30 +122,88 @@ public class WoodlightTracker {
                     continue;
                 }
 
-                entry.fireScheduler.tick(world, interiorBlocks, currentTick, currentDifficulty);
-
-                double prob = PortalLightProbability.compute(world, interiorBlocks, currentDifficulty);
-                entry.accumulate(prob);
+                if (!entry.pendingExtinguish.isEmpty()) {
+                    Iterator<Map.Entry<BlockPos, Long>> exIt = entry.pendingExtinguish.entrySet().iterator();
+                    while (exIt.hasNext()) {
+                        Map.Entry<BlockPos, Long> ex = exIt.next();
+                        if (currentTick >= ex.getValue()) {
+                            BlockPos pos = ex.getKey();
+                            if (world.getBlockState(pos).isIn(BlockTags.FIRE)) {
+                                world.setBlockState(pos, Blocks.AIR.getDefaultState(), 3);
+                            }
+                            exIt.remove();
+                        }
+                    }
+                }
 
                 List<BlockPos> flammable = getFlammableNeighbors(world, interiorBlocks);
                 List<BlockPos> lava = getReachableLava(world, interiorBlocks);
-                entry.updateSubChunks(interiorBlocks, flammable, lava);
+                List<BlockPos> firePositions = findFireNear(world, interiorBlocks);
+                List<BlockPos> zoneFlammable = getZoneFlammable(world, interiorBlocks);
 
-                // Cache for debug display
                 entry.cachedInterior = interiorBlocks;
                 entry.cachedFrame = getFrameBlocks(helper);
                 entry.cachedFlammable = flammable;
+                entry.cachedZoneFlammable = zoneFlammable;
                 entry.cachedLava = lava;
-                List<BlockPos> firePositions = findFireNear(world, interiorBlocks);
                 entry.cachedFirePositions = firePositions;
                 entry.cachedFireCount = firePositions.size();
+                entry.updateSubChunks(interiorBlocks, flammable, lava);
+                entry.perTickProbability = PortalLightProbability.compute(
+                        world, interiorBlocks, currentDifficulty, entry.pendingExtinguish.keySet());
 
-                if (entry.isReadyToLight()) {
-                    helper.createPortal();
+                activeEntries.add(entry);
+            }
+
+            List<List<PortalLightEntry>> components = computeGroups(activeEntries);
+
+            Map<Long, PortalGroup> groupMap = activeGroups.computeIfAbsent(
+                    world.getRegistryKey(), k -> new HashMap<>());
+            Set<Long> seenKeys = new HashSet<>();
+
+            for (List<PortalLightEntry> componentMembers : components) {
+                long memberKey = PortalGroup.computeMemberKey(canonicalSortMembers(componentMembers));
+                seenKeys.add(memberKey);
+
+                PortalGroup group = groupMap.get(memberKey);
+                if (group == null) {
+                    int groupAttempt = WoodlightPersistentState.get(world).peekNextAttempt();
+                    group = new PortalGroup(componentMembers, world.getSeed(), groupAttempt);
+                    groupMap.put(memberKey, group);
+                }
+
+                for (PortalLightEntry member : group.members) {
+                    member.accumulate(member.perTickProbability);
+                }
+
+                List<BlockPos> combinedInterior = group.getCombinedInteriorList();
+                Set<BlockPos> excludePending;
+                if (group.members.size() == 1) {
+                    excludePending = group.members.get(0).pendingExtinguish.keySet();
+                } else {
+                    excludePending = new HashSet<>();
+                    for (PortalLightEntry m : group.members) {
+                        excludePending.addAll(m.pendingExtinguish.keySet());
+                    }
+                }
+                group.scheduler.tick(world, combinedInterior, currentTick, currentDifficulty, excludePending);
+
+                if (group.getCumulativeProbability() >= group.targetCumulative) {
+                    PortalLightEntry winner = group.pickWinner();
+                    NetherPortalBlock.AreaHelper winnerHelper =
+                            NetherPortalBlock.createAreaHelper(world, winner.probePos);
+                    if (winnerHelper != null && winnerHelper.isValid()) {
+                        winnerHelper.createPortal();
+                    }
+                    winner.lit = true;
+                    group.resetMemberContributions();
                     WoodlightPersistentState.get(world).commitAttempt();
-                    toRemove.add(entry);
+                    groupMap.remove(memberKey);
+                    seenKeys.remove(memberKey);
                 }
             }
+
+            groupMap.entrySet().removeIf(e -> !seenKeys.contains(e.getKey()));
 
             if (!toRemove.isEmpty()) {
                 entries.removeAll(toRemove);
@@ -141,6 +214,59 @@ public class WoodlightTracker {
         if (world.getTime() % SCAN_INTERVAL == 0) {
             scanForSetups(world);
         }
+    }
+
+    private List<List<PortalLightEntry>> computeGroups(List<PortalLightEntry> activeEntries) {
+        int n = activeEntries.size();
+        if (n == 0) return new ArrayList<>();
+        int[] parent = new int[n];
+        for (int i = 0; i < n; i++) parent[i] = i;
+
+        Map<BlockPos, Integer> ownerByPos = new HashMap<>();
+        for (int i = 0; i < n; i++) {
+            PortalLightEntry e = activeEntries.get(i);
+            registerSet(parent, ownerByPos, e.cachedZoneFlammable, i);
+            registerSet(parent, ownerByPos, e.cachedLava, i);
+            registerSet(parent, ownerByPos, e.cachedFirePositions, i);
+        }
+
+        Map<Integer, List<PortalLightEntry>> components = new HashMap<>();
+        for (int i = 0; i < n; i++) {
+            int root = ufFind(parent, i);
+            components.computeIfAbsent(root, k -> new ArrayList<>()).add(activeEntries.get(i));
+        }
+        return new ArrayList<>(components.values());
+    }
+
+    private static void registerSet(int[] parent, Map<BlockPos, Integer> ownerByPos,
+                                    List<BlockPos> positions, int idx) {
+        if (positions == null) return;
+        for (BlockPos pos : positions) {
+            Integer existing = ownerByPos.putIfAbsent(pos, idx);
+            if (existing != null && existing != idx) ufUnion(parent, existing, idx);
+        }
+    }
+
+    private static int ufFind(int[] parent, int x) {
+        while (parent[x] != x) {
+            parent[x] = parent[parent[x]];
+            x = parent[x];
+        }
+        return x;
+    }
+
+    private static void ufUnion(int[] parent, int a, int b) {
+        int ra = ufFind(parent, a);
+        int rb = ufFind(parent, b);
+        if (ra != rb) parent[ra] = rb;
+    }
+
+    private static List<PortalLightEntry> canonicalSortMembers(List<PortalLightEntry> members) {
+        List<PortalLightEntry> sorted = new ArrayList<>(members);
+        sorted.sort(Comparator
+                .comparingLong((PortalLightEntry e) -> e.lowerCorner.asLong())
+                .thenComparingInt(e -> e.axis.ordinal()));
+        return sorted;
     }
 
     private void persistEntries(ServerWorld world) {
@@ -195,7 +321,7 @@ public class WoodlightTracker {
                         entry.updateSubChunks(interiorBlocks,
                                 getFlammableNeighbors(world, interiorBlocks),
                                 getReachableLava(world, interiorBlocks));
-                        entry.fireScheduler.clearPreExistingFires(world, interiorBlocks);
+                        scheduleFireFadeOut(world, entry, interiorBlocks, world.getTime());
                         activeTimers.computeIfAbsent(world.getRegistryKey(), k -> new CopyOnWriteArrayList<>()).add(entry);
                         persistEntries(world);
                     }
@@ -244,6 +370,26 @@ public class WoodlightTracker {
                 BlockPos neighbor = pos.offset(dir);
                 if (world.getBlockState(neighbor).getMaterial().isBurnable()) {
                     result.add(neighbor.toImmutable());
+                }
+            }
+        }
+        return result;
+    }
+
+    /** Flammable blocks in the ±2 zone around interior, used for grouping. */
+    private List<BlockPos> getZoneFlammable(ServerWorld world, List<BlockPos> interiorBlocks) {
+        Set<BlockPos> seen = new HashSet<>();
+        List<BlockPos> result = new ArrayList<>();
+        for (BlockPos interior : interiorBlocks) {
+            for (int dx = -2; dx <= 2; dx++) {
+                for (int dy = -1; dy <= 2; dy++) {
+                    for (int dz = -2; dz <= 2; dz++) {
+                        BlockPos pos = interior.add(dx, dy, dz);
+                        if (!seen.add(pos)) continue;
+                        if (world.getBlockState(pos).getMaterial().isBurnable()) {
+                            result.add(pos.toImmutable());
+                        }
+                    }
                 }
             }
         }
@@ -353,6 +499,32 @@ public class WoodlightTracker {
         return result;
     }
 
+    private void scheduleFireFadeOut(ServerWorld world, PortalLightEntry entry,
+                                     List<BlockPos> interiorBlocks, long currentTick) {
+        Set<BlockPos> seen = new HashSet<>();
+        List<BlockPos> fires = new ArrayList<>();
+        for (BlockPos interior : interiorBlocks) {
+            for (int dx = -3; dx <= 3; dx++) {
+                for (int dy = -2; dy <= 4; dy++) {
+                    for (int dz = -3; dz <= 3; dz++) {
+                        BlockPos pos = interior.add(dx, dy, dz);
+                        if (!seen.add(pos)) continue;
+                        if (!world.getBlockState(pos).isIn(BlockTags.FIRE)) continue;
+                        fires.add(pos.toImmutable());
+                    }
+                }
+            }
+        }
+        if (fires.isEmpty()) return;
+        fires.sort(Comparator.comparingLong(BlockPos::asLong));
+
+        int n = fires.size();
+        for (int i = 0; i < n; i++) {
+            long offset = (n == 1) ? 10L : 1L + ((long) i * 19L) / (n - 1);
+            entry.pendingExtinguish.put(fires.get(i), currentTick + offset);
+        }
+    }
+
     private List<BlockPos> findFireNear(ServerWorld world, List<BlockPos> interiorBlocks) {
         List<BlockPos> result = new ArrayList<>();
         Set<BlockPos> seen = new HashSet<>();
@@ -368,6 +540,22 @@ public class WoodlightTracker {
             }
         }
         return result;
+    }
+
+    private boolean isObsidianFrameIntact(ServerWorld world, PortalLightEntry entry) {
+        if (entry.cachedFrame.isEmpty()) return false;
+        for (BlockPos pos : entry.cachedFrame) {
+            if (!world.getBlockState(pos).isOf(Blocks.OBSIDIAN)) return false;
+        }
+        return true;
+    }
+
+    private boolean isInteriorAllPortalBlocks(ServerWorld world, PortalLightEntry entry) {
+        if (entry.cachedInterior.isEmpty()) return false;
+        for (BlockPos pos : entry.cachedInterior) {
+            if (!world.getBlockState(pos).isOf(Blocks.NETHER_PORTAL)) return false;
+        }
+        return true;
     }
 
     private boolean isNearAnyPlayer(ServerWorld world, BlockPos pos) {

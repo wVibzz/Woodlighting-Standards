@@ -18,9 +18,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * Schedules and executes deterministic fire events near portals.
- */
 public class FireEventScheduler {
 
     private static final double LAVA_TICK_CHANCE = 6.0 / 4096.0;
@@ -30,12 +27,28 @@ public class FireEventScheduler {
     private final Map<BlockPos, Long> scheduledSpreadFires = new HashMap<>();
     private final Map<BlockPos, Long> scheduledBurnAway = new HashMap<>();
     private final Map<Long, Integer> positionCounters = new HashMap<>();
+    private final Set<BlockPos> knownFires = new HashSet<>();
     private int lastDifficulty = -1;
+
+    private static final ThreadLocal<Boolean> SUPPRESS_FIRE_PORTAL = ThreadLocal.withInitial(() -> Boolean.FALSE);
+
+    public static boolean isSuppressingFirePortal() {
+        return SUPPRESS_FIRE_PORTAL.get();
+    }
+
+    private void placeFireSuppressed(ServerWorld world, BlockPos pos) {
+        SUPPRESS_FIRE_PORTAL.set(Boolean.TRUE);
+        try {
+            world.setBlockState(pos, AbstractFireBlock.getState(world, pos), 3);
+            knownFires.add(pos.toImmutable());
+        } finally {
+            SUPPRESS_FIRE_PORTAL.set(Boolean.FALSE);
+        }
+    }
 
     public Map<BlockPos, Long> getScheduledLavaFires() { return scheduledLavaFires; }
     public Map<BlockPos, Long> getScheduledSpreadFires() { return scheduledSpreadFires; }
     public Map<BlockPos, Long> getScheduledBurnAway() { return scheduledBurnAway; }
-    public Map<Long, Integer> getPositionCounters() { return positionCounters; }
 
     private final long worldSeed;
     private final int attempt;
@@ -52,9 +65,7 @@ public class FireEventScheduler {
         this.portalWidth = portalWidth;
     }
 
-    /**
-     * Canonical position key, invariant under mirroring and axis rotation.
-     */
+    /** Position key invariant under mirroring and axis rotation. */
     private long canonicalKey(BlockPos pos) {
         int dx = pos.getX() - portalOrigin.getX();
         int dy = pos.getY() - portalOrigin.getY();
@@ -75,7 +86,9 @@ public class FireEventScheduler {
         return BlockPos.asLong(uCanonical, dy, vCanonical);
     }
 
-    public void tick(ServerWorld world, List<BlockPos> interiorBlocks, long currentTick, int difficulty) {
+    /** @param excludePendingFires fires fading out post-detection that should not be integrated. */
+    public void tick(ServerWorld world, List<BlockPos> interiorBlocks, long currentTick, int difficulty,
+                     Set<BlockPos> excludePendingFires) {
         Set<BlockPos> interiorSet = new HashSet<>(interiorBlocks);
 
         if (lastDifficulty != -1 && lastDifficulty != difficulty) {
@@ -84,10 +97,38 @@ public class FireEventScheduler {
         lastDifficulty = difficulty;
 
         validateScheduled(world);
+        integrateExternalFires(world, interiorBlocks, interiorSet, currentTick, difficulty, excludePendingFires);
         scheduleLavaFires(world, interiorBlocks, interiorSet, currentTick);
         processScheduledLavaFires(world, interiorSet, currentTick, difficulty);
         processScheduledSpreadFires(world, interiorSet, currentTick, difficulty);
         processScheduledBurnAway(world, interiorSet, currentTick, difficulty);
+    }
+
+    private void integrateExternalFires(ServerWorld world, List<BlockPos> interiorBlocks,
+                                        Set<BlockPos> interiorSet, long currentTick, int difficulty,
+                                        Set<BlockPos> excludePendingFires) {
+        Set<BlockPos> seen = new HashSet<>();
+        List<BlockPos> newlyDiscovered = new ArrayList<>();
+        for (BlockPos interior : interiorBlocks) {
+            for (int dx = -2; dx <= 2; dx++) {
+                for (int dy = -2; dy <= 4; dy++) {
+                    for (int dz = -2; dz <= 2; dz++) {
+                        BlockPos pos = interior.add(dx, dy, dz);
+                        if (!seen.add(pos)) continue;
+                        if (interiorSet.contains(pos)) continue;
+                        if (!world.getBlockState(pos).isIn(net.minecraft.tag.BlockTags.FIRE)) continue;
+                        BlockPos immut = pos.toImmutable();
+                        if (knownFires.contains(immut)) continue;
+                        if (!excludePendingFires.isEmpty() && excludePendingFires.contains(immut)) continue;
+                        knownFires.add(immut);
+                        newlyDiscovered.add(immut);
+                    }
+                }
+            }
+        }
+        for (BlockPos firePos : newlyDiscovered) {
+            onFirePlaced(world, firePos, interiorSet, currentTick, difficulty);
+        }
     }
 
     private void rescheduleSpreadFires(ServerWorld world, long currentTick, int newDifficulty) {
@@ -103,22 +144,6 @@ public class FireEventScheduler {
         scheduledSpreadFires.putAll(rescheduled);
     }
 
-    public void clearPreExistingFires(ServerWorld world, List<BlockPos> interiorBlocks) {
-        Set<BlockPos> seen = new HashSet<>();
-        for (BlockPos interior : interiorBlocks) {
-            for (int dx = -3; dx <= 3; dx++) {
-                for (int dy = -2; dy <= 4; dy++) {
-                    for (int dz = -3; dz <= 3; dz++) {
-                        BlockPos pos = interior.add(dx, dy, dz);
-                        if (!seen.add(pos)) continue;
-                        if (!world.getBlockState(pos).isIn(net.minecraft.tag.BlockTags.FIRE)) continue;
-                        world.setBlockState(pos.toImmutable(), net.minecraft.block.Blocks.AIR.getDefaultState(), 3);
-                    }
-                }
-            }
-        }
-    }
-
     private void validateScheduled(ServerWorld world) {
         java.util.function.Predicate<Map.Entry<BlockPos, Long>> invalidFire = entry -> {
             BlockPos pos = entry.getKey();
@@ -129,8 +154,24 @@ public class FireEventScheduler {
         scheduledLavaFires.entrySet().removeIf(invalidFire);
         scheduledSpreadFires.entrySet().removeIf(invalidFire);
 
-        scheduledBurnAway.entrySet().removeIf(entry ->
-                !FlammableBlockUtil.isFlammable(world.getBlockState(entry.getKey())));
+        scheduledBurnAway.entrySet().removeIf(entry -> {
+            BlockPos pos = entry.getKey();
+            if (!FlammableBlockUtil.isFlammable(world.getBlockState(pos))) return true;
+            return !hasFireNeighbor(world, pos);
+        });
+
+        java.util.Iterator<BlockPos> it = knownFires.iterator();
+        while (it.hasNext()) {
+            BlockPos pos = it.next();
+            if (!world.getBlockState(pos).isIn(net.minecraft.tag.BlockTags.FIRE)) {
+                it.remove();
+                continue;
+            }
+            if (!hasBurnableNeighbor(world, pos)) {
+                world.setBlockState(pos, net.minecraft.block.Blocks.AIR.getDefaultState(), 3);
+                it.remove();
+            }
+        }
     }
 
     private boolean hasIgnitionSource(ServerWorld world, BlockPos pos) {
@@ -228,7 +269,7 @@ public class FireEventScheduler {
 
             if (!world.getBlockState(pos).isAir()) continue;
 
-            world.setBlockState(pos, AbstractFireBlock.getState(world, pos), 3);
+            placeFireSuppressed(world, pos);
             placed.add(pos);
         }
         for (BlockPos pos : placed) {
@@ -249,7 +290,7 @@ public class FireEventScheduler {
             BlockState state = world.getBlockState(pos);
             if (!FlammableBlockUtil.isFlammable(state)) continue;
 
-            world.setBlockState(pos, AbstractFireBlock.getState(world, pos), 3);
+            placeFireSuppressed(world, pos);
             burned.add(pos);
         }
         for (BlockPos pos : burned) {
@@ -307,21 +348,16 @@ public class FireEventScheduler {
         return Math.max(1, (int) (-Math.log(1.0 - uniform) * expectedTicks));
     }
 
-    public void loadState(Map<BlockPos, Long> lavaFires, Map<BlockPos, Long> spreadFires,
-                          Map<BlockPos, Long> burnAway, Map<Long, Integer> counters) {
-        scheduledLavaFires.clear();
-        scheduledLavaFires.putAll(lavaFires);
-        scheduledSpreadFires.clear();
-        scheduledSpreadFires.putAll(spreadFires);
-        scheduledBurnAway.clear();
-        scheduledBurnAway.putAll(burnAway);
-        positionCounters.clear();
-        positionCounters.putAll(counters);
-    }
-
     private static boolean hasBurnableNeighbor(ServerWorld world, BlockPos pos) {
         for (Direction dir : Direction.values()) {
             if (world.getBlockState(pos.offset(dir)).getMaterial().isBurnable()) return true;
+        }
+        return false;
+    }
+
+    private static boolean hasFireNeighbor(ServerWorld world, BlockPos pos) {
+        for (Direction dir : Direction.values()) {
+            if (world.getBlockState(pos.offset(dir)).isIn(net.minecraft.tag.BlockTags.FIRE)) return true;
         }
         return false;
     }
