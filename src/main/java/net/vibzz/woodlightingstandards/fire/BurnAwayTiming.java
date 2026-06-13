@@ -1,13 +1,12 @@
 package net.vibzz.woodlightingstandards.fire;
 
 import net.minecraft.block.BlockState;
-import net.minecraft.util.math.BlockPos;
 import net.vibzz.woodlightingstandards.util.FlammableBlockUtil;
 
 /**
  * Computes deterministic burn-away times for flammable blocks near portals.
- * The actual burn time is derived from the world seed + block position,
- * falling within the min/max range for that block type.
+ * The burn time is derived from the world seed and a portal-relative position
+ * key, falling within the min/max range for that block type.
  */
 public class BurnAwayTiming {
 
@@ -26,13 +25,13 @@ public class BurnAwayTiming {
         return (int) ((SPREAD_FACTOR / (double) spreadChance) * 2.5 * AVG_FIRE_TICK);
     }
 
-    public static int calculateBurnTime(BlockState state, BlockPos pos, long worldSeed) {
+    public static int calculateBurnTime(BlockState state, long positionKey, long worldSeed) {
         int min = getMinTicks(state);
         int max = getMaxTicks(state);
         if (min < 0 || max < 0) return -1;
 
         int spreadChance = FlammableBlockUtil.getSpreadChance(state);
-        long hash = mixSeed(worldSeed ^ mixSeed(spreadChance) ^ mixSeed(pos.asLong()));
+        long hash = mixSeed(worldSeed ^ mixSeed(spreadChance) ^ mixSeed(positionKey));
         double uniform = (double) (hash & 0x7FFFFFFFFFFFFFFFL) / (double) Long.MAX_VALUE;
 
         return min + (int) (uniform * (max - min));

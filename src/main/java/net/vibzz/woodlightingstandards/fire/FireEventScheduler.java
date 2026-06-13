@@ -309,7 +309,7 @@ public class FireEventScheduler {
             BlockState neighborState = world.getBlockState(neighbor);
 
             if (FlammableBlockUtil.isFlammable(neighborState) && !scheduledBurnAway.containsKey(neighbor)) {
-                int burnTime = BurnAwayTiming.calculateBurnTime(neighborState, neighbor, worldSeed);
+                int burnTime = BurnAwayTiming.calculateBurnTime(neighborState, canonicalKey(neighbor), worldSeed);
                 if (burnTime > 0) {
                     scheduledBurnAway.put(neighbor.toImmutable(), currentTick + burnTime);
                 }
