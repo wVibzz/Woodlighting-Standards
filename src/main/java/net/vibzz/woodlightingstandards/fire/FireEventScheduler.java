@@ -23,11 +23,13 @@ public class FireEventScheduler {
     private static final double LAVA_TICK_CHANCE = 6.0 / 4096.0;
     private static final double AVG_FIRE_TICK_INTERVAL = 34.5;
 
+    private static final long EXTINGUISH_GRACE_TICKS = 40L;
+
     private final Map<BlockPos, Long> scheduledLavaFires = new HashMap<>();
     private final Map<BlockPos, Long> scheduledSpreadFires = new HashMap<>();
     private final Map<BlockPos, Long> scheduledBurnAway = new HashMap<>();
     private final Map<Long, Integer> positionCounters = new HashMap<>();
-    private final Set<BlockPos> knownFires = new HashSet<>();
+    private final Map<BlockPos, Long> knownFires = new HashMap<>();
     private int lastDifficulty = -1;
 
     private static final ThreadLocal<Boolean> SUPPRESS_FIRE_PORTAL = ThreadLocal.withInitial(() -> Boolean.FALSE);
@@ -40,7 +42,7 @@ public class FireEventScheduler {
         SUPPRESS_FIRE_PORTAL.set(Boolean.TRUE);
         try {
             world.setBlockState(pos, AbstractFireBlock.getState(world, pos), 3);
-            knownFires.add(pos.toImmutable());
+            knownFires.put(pos.toImmutable(), world.getTime());
         } finally {
             SUPPRESS_FIRE_PORTAL.set(Boolean.FALSE);
         }
@@ -110,17 +112,17 @@ public class FireEventScheduler {
         Set<BlockPos> seen = new HashSet<>();
         List<BlockPos> newlyDiscovered = new ArrayList<>();
         for (BlockPos interior : interiorBlocks) {
-            for (int dx = -2; dx <= 2; dx++) {
-                for (int dy = -2; dy <= 4; dy++) {
-                    for (int dz = -2; dz <= 2; dz++) {
+            for (int dx = -5; dx <= 5; dx++) {
+                for (int dy = -5; dy <= 5; dy++) {
+                    for (int dz = -5; dz <= 5; dz++) {
                         BlockPos pos = interior.add(dx, dy, dz);
                         if (!seen.add(pos)) continue;
                         if (interiorSet.contains(pos)) continue;
                         if (!world.getBlockState(pos).isIn(net.minecraft.tag.BlockTags.FIRE)) continue;
                         BlockPos immut = pos.toImmutable();
-                        if (knownFires.contains(immut)) continue;
+                        if (knownFires.containsKey(immut)) continue;
                         if (!excludePendingFires.isEmpty() && excludePendingFires.contains(immut)) continue;
-                        knownFires.add(immut);
+                        knownFires.put(immut, currentTick);
                         newlyDiscovered.add(immut);
                     }
                 }
@@ -160,17 +162,19 @@ public class FireEventScheduler {
             return !hasFireNeighbor(world, pos);
         });
 
-        java.util.Iterator<BlockPos> it = knownFires.iterator();
-        while (it.hasNext()) {
-            BlockPos pos = it.next();
+        long now = world.getTime();
+        Iterator<Map.Entry<BlockPos, Long>> kit = knownFires.entrySet().iterator();
+        while (kit.hasNext()) {
+            Map.Entry<BlockPos, Long> kf = kit.next();
+            BlockPos pos = kf.getKey();
             if (!world.getBlockState(pos).isIn(net.minecraft.tag.BlockTags.FIRE)) {
-                it.remove();
+                kit.remove();
                 continue;
             }
-            if (!hasBurnableNeighbor(world, pos)) {
-                world.setBlockState(pos, net.minecraft.block.Blocks.AIR.getDefaultState(), 3);
-                it.remove();
-            }
+            if (hasBurnableNeighbor(world, pos)) continue;
+            if (now - kf.getValue() < EXTINGUISH_GRACE_TICKS) continue;
+            world.setBlockState(pos, net.minecraft.block.Blocks.AIR.getDefaultState(), 3);
+            kit.remove();
         }
     }
 
@@ -305,7 +309,7 @@ public class FireEventScheduler {
             BlockState neighborState = world.getBlockState(neighbor);
 
             if (FlammableBlockUtil.isFlammable(neighborState) && !scheduledBurnAway.containsKey(neighbor)) {
-                int burnTime = BurnAwayTiming.calculateBurnTime(neighborState, worldSeed);
+                int burnTime = BurnAwayTiming.calculateBurnTime(neighborState, neighbor, worldSeed);
                 if (burnTime > 0) {
                     scheduledBurnAway.put(neighbor.toImmutable(), currentTick + burnTime);
                 }

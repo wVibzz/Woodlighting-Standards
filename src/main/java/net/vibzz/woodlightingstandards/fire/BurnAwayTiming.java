@@ -1,6 +1,7 @@
 package net.vibzz.woodlightingstandards.fire;
 
 import net.minecraft.block.BlockState;
+import net.minecraft.util.math.BlockPos;
 import net.vibzz.woodlightingstandards.util.FlammableBlockUtil;
 
 /**
@@ -25,13 +26,13 @@ public class BurnAwayTiming {
         return (int) ((SPREAD_FACTOR / (double) spreadChance) * 2.5 * AVG_FIRE_TICK);
     }
 
-    public static int calculateBurnTime(BlockState state, long worldSeed) {
+    public static int calculateBurnTime(BlockState state, BlockPos pos, long worldSeed) {
         int min = getMinTicks(state);
         int max = getMaxTicks(state);
         if (min < 0 || max < 0) return -1;
 
         int spreadChance = FlammableBlockUtil.getSpreadChance(state);
-        long hash = mixSeed(worldSeed ^ mixSeed(spreadChance));
+        long hash = mixSeed(worldSeed ^ mixSeed(spreadChance) ^ mixSeed(pos.asLong()));
         double uniform = (double) (hash & 0x7FFFFFFFFFFFFFFFL) / (double) Long.MAX_VALUE;
 
         return min + (int) (uniform * (max - min));

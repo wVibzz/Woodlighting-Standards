@@ -17,11 +17,11 @@ import java.util.Random;
 public class LavaFluidMixin {
 
     @Inject(method = "onRandomTick", at = @At("HEAD"), cancellable = true)
-    private void suppressLavaFireInPortalSubChunk(World world, BlockPos pos, FluidState state, Random random, CallbackInfo ci) {
+    private void suppressLavaFireInTrackedArea(World world, BlockPos pos, FluidState state, Random random, CallbackInfo ci) {
         if (world instanceof ServerWorld) {
             ServerWorld serverWorld = (ServerWorld) world;
             WoodlightTracker tracker = WoodlightTracker.getInstance();
-            if (tracker.isEnabled(serverWorld) && tracker.isPortalSubChunk(serverWorld, pos)) {
+            if (tracker.isEnabled(serverWorld) && tracker.isInTrackedArea(world, pos)) {
                 ci.cancel();
             }
         }

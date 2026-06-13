@@ -16,9 +16,10 @@ import java.util.Random;
 public class FireBlockMixin {
 
     @Inject(method = "scheduledTick", at = @At("HEAD"), cancellable = true)
-    private void suppressFireSpreadInPortalSubChunk(BlockState state, ServerWorld world, BlockPos pos, Random random, CallbackInfo ci) {
+    private void suppressFireSpreadInTrackedArea(BlockState state, ServerWorld world, BlockPos pos, Random random, CallbackInfo ci) {
         WoodlightTracker tracker = WoodlightTracker.getInstance();
-        if (tracker.isEnabled(world) && tracker.isPortalSubChunk(world, pos)) {
+        if (tracker.isEnabled(world) && tracker.isInTrackedArea(world, pos)) {
+            world.getBlockTickScheduler().schedule(pos, state.getBlock(), 30 + random.nextInt(10));
             ci.cancel();
         }
     }

@@ -8,17 +8,16 @@ import net.minecraft.server.world.ServerWorld;
 import net.minecraft.tag.BlockTags;
 import net.minecraft.tag.FluidTags;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.ChunkSectionPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.registry.RegistryKey;
 import net.minecraft.world.World;
 import net.vibzz.woodlightingstandards.Woodlightingstandards;
 import net.vibzz.woodlightingstandards.mixin.AreaHelperAccessor;
 import net.vibzz.woodlightingstandards.util.PortalLightProbability;
+import net.vibzz.woodlightingstandards.util.SeedTimingUtil;
 
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -30,11 +29,11 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public class WoodlightTracker {
     private static final WoodlightTracker INSTANCE = new WoodlightTracker();
     private final Map<RegistryKey<World>, CopyOnWriteArrayList<PortalLightEntry>> activeTimers = new ConcurrentHashMap<>();
-    private final Map<RegistryKey<World>, Map<Long, PortalGroup>> activeGroups = new ConcurrentHashMap<>();
     private final Set<RegistryKey<World>> loadedWorlds = ConcurrentHashMap.newKeySet();
 
     private static final int SCAN_RADIUS = 12;
     private static final int SCAN_INTERVAL = 10;
+    private static final int SUPPRESS_RADIUS = 5;
 
 
     public static WoodlightTracker getInstance() {
@@ -45,23 +44,21 @@ public class WoodlightTracker {
         return activeTimers.get(world.getRegistryKey());
     }
 
-    public boolean isPortalSubChunk(ServerWorld world, int sectionX, int sectionY, int sectionZ) {
+    public boolean isInTrackedArea(World world, BlockPos pos) {
         List<PortalLightEntry> entries = activeTimers.get(world.getRegistryKey());
         if (entries == null || entries.isEmpty()) return false;
 
-        long key = ChunkSectionPos.asLong(sectionX, sectionY, sectionZ);
         for (PortalLightEntry entry : entries) {
-            if (entry.portalSubChunks.contains(key)) return true;
+            if (entry.lit) continue;
+            for (BlockPos interior : entry.cachedInterior) {
+                if (Math.abs(pos.getX() - interior.getX()) <= SUPPRESS_RADIUS
+                        && Math.abs(pos.getY() - interior.getY()) <= SUPPRESS_RADIUS
+                        && Math.abs(pos.getZ() - interior.getZ()) <= SUPPRESS_RADIUS) {
+                    return true;
+                }
+            }
         }
         return false;
-    }
-
-    public boolean isPortalSubChunk(ServerWorld world, BlockPos pos) {
-        return isPortalSubChunk(world, pos.getX() >> 4, pos.getY() >> 4, pos.getZ() >> 4);
-    }
-
-    public Map<Long, PortalGroup> getActiveGroups(ServerWorld world) {
-        return activeGroups.get(world.getRegistryKey());
     }
 
     public boolean isEnabled(ServerWorld world) {
@@ -139,71 +136,44 @@ public class WoodlightTracker {
                 List<BlockPos> flammable = getFlammableNeighbors(world, interiorBlocks);
                 List<BlockPos> lava = getReachableLava(world, interiorBlocks);
                 List<BlockPos> firePositions = findFireNear(world, interiorBlocks);
-                List<BlockPos> zoneFlammable = getZoneFlammable(world, interiorBlocks);
 
                 entry.cachedInterior = interiorBlocks;
                 entry.cachedFrame = getFrameBlocks(helper);
                 entry.cachedFlammable = flammable;
-                entry.cachedZoneFlammable = zoneFlammable;
                 entry.cachedLava = lava;
                 entry.cachedFirePositions = firePositions;
                 entry.cachedFireCount = firePositions.size();
-                entry.updateSubChunks(interiorBlocks, flammable, lava);
                 entry.perTickProbability = PortalLightProbability.compute(
                         world, interiorBlocks, currentDifficulty, entry.pendingExtinguish.keySet());
+
+                entry.scheduler.tick(world, interiorBlocks, currentTick, currentDifficulty,
+                        entry.pendingExtinguish.keySet());
 
                 activeEntries.add(entry);
             }
 
-            List<List<PortalLightEntry>> components = computeGroups(activeEntries);
+            if (!activeEntries.isEmpty()) {
+                WoodlightPersistentState state = WoodlightPersistentState.get(world);
+                double rate = 0;
+                for (PortalLightEntry e : activeEntries) rate += e.perTickProbability;
 
-            Map<Long, PortalGroup> groupMap = activeGroups.computeIfAbsent(
-                    world.getRegistryKey(), k -> new HashMap<>());
-            Set<Long> seenKeys = new HashSet<>();
+                double target = SeedTimingUtil.calculateTargetCumulative(world.getSeed(), state.peekNextAttempt());
+                double progress = state.getGlobalProgress() + rate;
 
-            for (List<PortalLightEntry> componentMembers : components) {
-                long memberKey = PortalGroup.computeMemberKey(canonicalSortMembers(componentMembers));
-                seenKeys.add(memberKey);
-
-                PortalGroup group = groupMap.get(memberKey);
-                if (group == null) {
-                    int groupAttempt = WoodlightPersistentState.get(world).peekNextAttempt();
-                    group = new PortalGroup(componentMembers, world.getSeed(), groupAttempt);
-                    groupMap.put(memberKey, group);
-                }
-
-                for (PortalLightEntry member : group.members) {
-                    member.accumulate(member.perTickProbability);
-                }
-
-                List<BlockPos> combinedInterior = group.getCombinedInteriorList();
-                Set<BlockPos> excludePending;
-                if (group.members.size() == 1) {
-                    excludePending = group.members.get(0).pendingExtinguish.keySet();
-                } else {
-                    excludePending = new HashSet<>();
-                    for (PortalLightEntry m : group.members) {
-                        excludePending.addAll(m.pendingExtinguish.keySet());
-                    }
-                }
-                group.scheduler.tick(world, combinedInterior, currentTick, currentDifficulty, excludePending);
-
-                if (group.getCumulativeProbability() >= group.targetCumulative) {
-                    PortalLightEntry winner = group.pickWinner();
+                if (progress >= target) {
+                    PortalLightEntry winner = pickWinner(activeEntries, world.getSeed(), state.peekNextAttempt());
                     NetherPortalBlock.AreaHelper winnerHelper =
                             NetherPortalBlock.createAreaHelper(world, winner.probePos);
                     if (winnerHelper != null && winnerHelper.isValid()) {
                         winnerHelper.createPortal();
                     }
                     winner.lit = true;
-                    group.resetMemberContributions();
-                    WoodlightPersistentState.get(world).commitAttempt();
-                    groupMap.remove(memberKey);
-                    seenKeys.remove(memberKey);
+                    state.commitAttempt();
+                    state.setGlobalProgress(0);
+                } else {
+                    state.setGlobalProgress(progress);
                 }
             }
-
-            groupMap.entrySet().removeIf(e -> !seenKeys.contains(e.getKey()));
 
             if (!toRemove.isEmpty()) {
                 entries.removeAll(toRemove);
@@ -216,57 +186,35 @@ public class WoodlightTracker {
         }
     }
 
-    private List<List<PortalLightEntry>> computeGroups(List<PortalLightEntry> activeEntries) {
-        int n = activeEntries.size();
-        if (n == 0) return new ArrayList<>();
-        int[] parent = new int[n];
-        for (int i = 0; i < n; i++) parent[i] = i;
-
-        Map<BlockPos, Integer> ownerByPos = new HashMap<>();
-        for (int i = 0; i < n; i++) {
-            PortalLightEntry e = activeEntries.get(i);
-            registerSet(parent, ownerByPos, e.cachedZoneFlammable, i);
-            registerSet(parent, ownerByPos, e.cachedLava, i);
-            registerSet(parent, ownerByPos, e.cachedFirePositions, i);
-        }
-
-        Map<Integer, List<PortalLightEntry>> components = new HashMap<>();
-        for (int i = 0; i < n; i++) {
-            int root = ufFind(parent, i);
-            components.computeIfAbsent(root, k -> new ArrayList<>()).add(activeEntries.get(i));
-        }
-        return new ArrayList<>(components.values());
-    }
-
-    private static void registerSet(int[] parent, Map<BlockPos, Integer> ownerByPos,
-                                    List<BlockPos> positions, int idx) {
-        if (positions == null) return;
-        for (BlockPos pos : positions) {
-            Integer existing = ownerByPos.putIfAbsent(pos, idx);
-            if (existing != null && existing != idx) ufUnion(parent, existing, idx);
-        }
-    }
-
-    private static int ufFind(int[] parent, int x) {
-        while (parent[x] != x) {
-            parent[x] = parent[parent[x]];
-            x = parent[x];
-        }
-        return x;
-    }
-
-    private static void ufUnion(int[] parent, int a, int b) {
-        int ra = ufFind(parent, a);
-        int rb = ufFind(parent, b);
-        if (ra != rb) parent[ra] = rb;
-    }
-
-    private static List<PortalLightEntry> canonicalSortMembers(List<PortalLightEntry> members) {
-        List<PortalLightEntry> sorted = new ArrayList<>(members);
+    private PortalLightEntry pickWinner(List<PortalLightEntry> candidates, long seed, int attempt) {
+        List<PortalLightEntry> sorted = new ArrayList<>(candidates);
         sorted.sort(Comparator
                 .comparingLong((PortalLightEntry e) -> e.lowerCorner.asLong())
                 .thenComparingInt(e -> e.axis.ordinal()));
-        return sorted;
+
+        double total = 0;
+        for (PortalLightEntry e : sorted) total += e.perTickProbability;
+        if (total <= 0) return sorted.get(0);
+
+        long mixed = mixSeed(seed ^ mixSeed(attempt) ^ 0x57494E4EL);
+        double uniform = (double) (mixed & 0x7FFFFFFFFFFFFFFFL) / ((double) Long.MAX_VALUE + 1.0);
+        double threshold = uniform * total;
+
+        double accum = 0;
+        for (PortalLightEntry e : sorted) {
+            accum += e.perTickProbability;
+            if (accum >= threshold) return e;
+        }
+        return sorted.get(sorted.size() - 1);
+    }
+
+    private static long mixSeed(long seed) {
+        seed ^= (seed >>> 30);
+        seed *= 0xbf58476d1ce4e5b9L;
+        seed ^= (seed >>> 27);
+        seed *= 0x94d049bb133111ebL;
+        seed ^= (seed >>> 31);
+        return seed;
     }
 
     private void persistEntries(ServerWorld world) {
@@ -318,9 +266,7 @@ public class WoodlightTracker {
                                 lowerCorner, foundAxis, above, attempt,
                                 world.getTime(), world.getSeed(), prob,
                                 helper.getWidth(), helper.getHeight());
-                        entry.updateSubChunks(interiorBlocks,
-                                getFlammableNeighbors(world, interiorBlocks),
-                                getReachableLava(world, interiorBlocks));
+                        entry.cachedInterior = interiorBlocks;
                         scheduleFireFadeOut(world, entry, interiorBlocks, world.getTime());
                         activeTimers.computeIfAbsent(world.getRegistryKey(), k -> new CopyOnWriteArrayList<>()).add(entry);
                         persistEntries(world);
@@ -370,26 +316,6 @@ public class WoodlightTracker {
                 BlockPos neighbor = pos.offset(dir);
                 if (world.getBlockState(neighbor).getMaterial().isBurnable()) {
                     result.add(neighbor.toImmutable());
-                }
-            }
-        }
-        return result;
-    }
-
-    /** Flammable blocks in the ±2 zone around interior, used for grouping. */
-    private List<BlockPos> getZoneFlammable(ServerWorld world, List<BlockPos> interiorBlocks) {
-        Set<BlockPos> seen = new HashSet<>();
-        List<BlockPos> result = new ArrayList<>();
-        for (BlockPos interior : interiorBlocks) {
-            for (int dx = -2; dx <= 2; dx++) {
-                for (int dy = -1; dy <= 2; dy++) {
-                    for (int dz = -2; dz <= 2; dz++) {
-                        BlockPos pos = interior.add(dx, dy, dz);
-                        if (!seen.add(pos)) continue;
-                        if (world.getBlockState(pos).getMaterial().isBurnable()) {
-                            result.add(pos.toImmutable());
-                        }
-                    }
                 }
             }
         }

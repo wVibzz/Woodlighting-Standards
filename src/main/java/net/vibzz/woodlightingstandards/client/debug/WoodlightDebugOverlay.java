@@ -29,7 +29,7 @@ public class WoodlightDebugOverlay {
         RenderSystem.lineWidth(2.0f);
 
         for (PortalScanResult.PortalData pd : scan.portals) {
-            if (pd.timerActive) {
+            if (!pd.lit && pd.perTickProbability > 0) {
                 float pulse = (float) (0.15 + 0.1 * Math.sin(System.currentTimeMillis() / 200.0));
                 for (BlockPos pos : pd.frame) {
                     drawInnerFaces(matrices, pos, pd.interior, 0.1f, 0.8f, 0.9f, 0.9f, pulse);

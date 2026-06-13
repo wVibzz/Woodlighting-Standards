@@ -14,6 +14,7 @@ public class WoodlightPersistentState extends PersistentState {
     private static final String ID = "wls";
 
     private int attemptCount = 0;
+    private double globalProgress = 0;
     private final List<PortalLightEntry> savedEntries = new ArrayList<>();
 
     public WoodlightPersistentState() {
@@ -33,6 +34,15 @@ public class WoodlightPersistentState extends PersistentState {
         markDirty();
     }
 
+    public double getGlobalProgress() {
+        return globalProgress;
+    }
+
+    public void setGlobalProgress(double progress) {
+        this.globalProgress = progress;
+        markDirty();
+    }
+
     public List<PortalLightEntry> getSavedEntries() {
         return savedEntries;
     }
@@ -46,6 +56,7 @@ public class WoodlightPersistentState extends PersistentState {
     @Override
     public void fromTag(CompoundTag tag) {
         this.attemptCount = tag.getInt("AttemptCount");
+        this.globalProgress = tag.getDouble("GlobalProgress");
 
         savedEntries.clear();
         ListTag list = tag.getList("ActiveTimers", 10);
@@ -64,18 +75,16 @@ public class WoodlightPersistentState extends PersistentState {
         long startTick = entryTag.getLong("StartTick");
         long worldSeed = entryTag.getLong("WorldSeed");
         double prob = entryTag.getDouble("Probability");
-        double cumulative = entryTag.getDouble("Cumulative");
         int portalWidth = entryTag.getInt("PortalWidth");
         int portalHeight = entryTag.getInt("PortalHeight");
 
-        PortalLightEntry entry = new PortalLightEntry(lowerCorner, axis, probePos, attempt, startTick, worldSeed, prob, portalWidth, portalHeight);
-        entry.cumulativeContribution = cumulative;
-        return entry;
+        return new PortalLightEntry(lowerCorner, axis, probePos, attempt, startTick, worldSeed, prob, portalWidth, portalHeight);
     }
 
     @Override
     public CompoundTag toTag(CompoundTag tag) {
         tag.putInt("AttemptCount", this.attemptCount);
+        tag.putDouble("GlobalProgress", this.globalProgress);
 
         ListTag list = new ListTag();
         for (PortalLightEntry entry : savedEntries) {
@@ -103,7 +112,6 @@ public class WoodlightPersistentState extends PersistentState {
         entryTag.putLong("StartTick", entry.startTick);
         entryTag.putLong("WorldSeed", entry.worldSeed);
         entryTag.putDouble("Probability", entry.perTickProbability);
-        entryTag.putDouble("Cumulative", entry.cumulativeContribution);
         entryTag.putInt("PortalWidth", entry.portalWidth);
         entryTag.putInt("PortalHeight", entry.portalHeight);
         return entryTag;
