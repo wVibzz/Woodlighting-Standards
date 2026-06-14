@@ -46,7 +46,13 @@ public class WoodlightDebugHud {
             return;
         }
 
-        int totalLines = 4; // header + seed + global progress + bar
+        boolean hasUnlit = false;
+        for (PortalScanResult.PortalData pd : scan.portals) {
+            if (!pd.lit) { hasUnlit = true; break; }
+        }
+
+        int totalLines = 2; // header + seed
+        if (hasUnlit) totalLines += 2; // global progress + bar
         for (PortalScanResult.PortalData pd : scan.portals) {
             totalLines += 1; // portal header
             if (pd.lit) continue;
@@ -74,28 +80,30 @@ public class WoodlightDebugHud {
                 "Seed: §7" + scan.worldSeed + "§r | " + diffColor + diffName, x, y, 0xFFFFFF);
         y += lineH + 2;
 
-        double totalRate = 0;
-        for (PortalScanResult.PortalData pd : scan.portals) {
-            if (!pd.lit) totalRate += pd.perTickProbability;
-        }
-        double remaining = Math.max(0, scan.globalTarget - scan.globalProgress);
-        double etaSec = totalRate > 0 ? (remaining / totalRate) / 20.0 : 0;
-        text.drawWithShadow(matrices,
-                String.format("Attempt #§b%d§r | §e%.4f§r/§b%.4f§r | ETA §e%.1fs",
-                        scan.attempt, scan.globalProgress, scan.globalTarget, etaSec),
-                x, y, 0xFFFFFF);
-        y += lineH;
+        if (hasUnlit) {
+            double totalRate = 0;
+            for (PortalScanResult.PortalData pd : scan.portals) {
+                if (!pd.lit) totalRate += pd.perTickProbability;
+            }
+            double remaining = Math.max(0, scan.globalTarget - scan.globalProgress);
+            double etaSec = totalRate > 0 ? (remaining / totalRate) / 20.0 : 0;
+            text.drawWithShadow(matrices,
+                    String.format("Attempt #§b%d§r | §e%.4f§r/§b%.4f§r | ETA §e%.1fs",
+                            scan.attempt, scan.globalProgress, scan.globalTarget, etaSec),
+                    x, y, 0xFFFFFF);
+            y += lineH;
 
-        float progress = scan.globalTarget > 0 ? (float) (scan.globalProgress / scan.globalTarget) : 0;
-        progress = Math.max(0, Math.min(1, progress));
-        int barW = 180;
-        int barH = 6;
-        int barY = y + 2;
-        fill(matrices, x, barY, x + barW, barY + barH, 0xFF333333);
-        int filledW = (int) (barW * progress);
-        int barColor = progress < 0.5f ? 0xFF55FF55 : progress < 0.8f ? 0xFFFFFF55 : 0xFFFF5555;
-        fill(matrices, x, barY, x + filledW, barY + barH, barColor);
-        y += barH + 6;
+            float progress = scan.globalTarget > 0 ? (float) (scan.globalProgress / scan.globalTarget) : 0;
+            progress = Math.max(0, Math.min(1, progress));
+            int barW = 180;
+            int barH = 6;
+            int barY = y + 2;
+            fill(matrices, x, barY, x + barW, barY + barH, 0xFF333333);
+            int filledW = (int) (barW * progress);
+            int barColor = progress < 0.5f ? 0xFF55FF55 : progress < 0.8f ? 0xFFFFFF55 : 0xFFFF5555;
+            fill(matrices, x, barY, x + filledW, barY + barH, barColor);
+            y += barH + 6;
+        }
 
         for (int i = 0; i < scan.portals.size(); i++) {
             PortalScanResult.PortalData pd = scan.portals.get(i);

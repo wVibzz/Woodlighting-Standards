@@ -343,10 +343,10 @@ public class WoodlightTracker {
     }
 
     private void handleLitPortalDetection(ServerWorld world, BlockPos portalBlock, Set<Long> checkedFrames) {
-        // Walk to find lowerCorner of the lit portal
         BlockPos start = portalBlock;
         Direction.Axis axis = world.getBlockState(portalBlock).get(net.minecraft.state.property.Properties.HORIZONTAL_AXIS);
         Direction negDir = (axis == Direction.Axis.X) ? Direction.WEST : Direction.SOUTH;
+        Direction posDir = negDir.getOpposite();
 
         while (world.getBlockState(start.offset(negDir)).isOf(Blocks.NETHER_PORTAL)) {
             start = start.offset(negDir);
@@ -355,15 +355,17 @@ public class WoodlightTracker {
             start = start.down();
         }
 
-        long frameKey = start.asLong() ^ ((long) axis.ordinal() << 62);
-        if (!checkedFrames.add(frameKey)) return;
-        if (isTrackedAt(world, start, axis)) return;
-
-        Direction posDir = negDir.getOpposite();
         int width = 0;
         while (world.getBlockState(start.offset(posDir, width)).isOf(Blocks.NETHER_PORTAL)) width++;
         int height = 0;
         while (world.getBlockState(start.up(height)).isOf(Blocks.NETHER_PORTAL)) height++;
+
+        // positive-most bottom corner, matching AreaHelper.getLowerCorner so dedup works
+        BlockPos lowerCorner = start.offset(posDir, width - 1);
+
+        long frameKey = lowerCorner.asLong() ^ ((long) axis.ordinal() << 62);
+        if (!checkedFrames.add(frameKey)) return;
+        if (isTrackedAt(world, lowerCorner, axis)) return;
 
         List<BlockPos> interior = new ArrayList<>();
         List<BlockPos> frame = new ArrayList<>();
@@ -380,7 +382,7 @@ public class WoodlightTracker {
         }
 
         PortalLightEntry entry = new PortalLightEntry(
-                start, axis, start, 0, world.getTime(), world.getSeed(), 0, width, height);
+                lowerCorner, axis, lowerCorner, 0, world.getTime(), world.getSeed(), 0, width, height);
         entry.lit = true;
         entry.cachedInterior = interior;
         entry.cachedFrame = frame;
@@ -441,13 +443,8 @@ public class WoodlightTracker {
                 }
             }
         }
-        if (fires.isEmpty()) return;
-        fires.sort(Comparator.comparingLong(BlockPos::asLong));
-
-        int n = fires.size();
-        for (int i = 0; i < n; i++) {
-            long offset = (n == 1) ? 10L : 1L + ((long) i * 19L) / (n - 1);
-            entry.pendingExtinguish.put(fires.get(i), currentTick + offset);
+        for (BlockPos pos : fires) {
+            entry.pendingExtinguish.put(pos, currentTick + 1 + world.random.nextInt(20));
         }
     }
 
