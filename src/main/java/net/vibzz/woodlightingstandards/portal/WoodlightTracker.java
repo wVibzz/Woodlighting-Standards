@@ -40,6 +40,11 @@ public class WoodlightTracker {
         return INSTANCE;
     }
 
+    public void reset() {
+        activeTimers.clear();
+        loadedWorlds.clear();
+    }
+
     public List<PortalLightEntry> getAllEntries(ServerWorld world) {
         return activeTimers.get(world.getRegistryKey());
     }
@@ -99,20 +104,23 @@ public class WoodlightTracker {
                 }
 
                 NetherPortalBlock.AreaHelper helper = NetherPortalBlock.createAreaHelper(world, entry.probePos);
-                if (helper == null || !helper.isValid()) {
+                boolean blocked = helper == null || !helper.isValid();
+
+                if (blocked) {
                     if (isInteriorAllPortalBlocks(world, entry)) {
                         entry.lit = true;
                         continue;
                     }
                     if (!isObsidianFrameIntact(world, entry)) {
                         toRemove.add(entry);
+                        continue;
                     }
-                    continue;
                 }
+                entry.blocked = blocked;
 
-                List<BlockPos> interiorBlocks = getInteriorBlocks(helper);
+                List<BlockPos> interiorBlocks = blocked ? entry.cachedInterior : getInteriorBlocks(helper);
 
-                if (isPortalLit(world, interiorBlocks)) {
+                if (!blocked && isPortalLit(world, interiorBlocks)) {
                     entry.lit = true;
                     entry.cachedInterior = interiorBlocks;
                     entry.cachedFrame = getFrameBlocks(helper);
@@ -137,19 +145,23 @@ public class WoodlightTracker {
                 List<BlockPos> lava = getReachableLava(world, interiorBlocks);
                 List<BlockPos> firePositions = findFireNear(world, interiorBlocks);
 
-                entry.cachedInterior = interiorBlocks;
-                entry.cachedFrame = getFrameBlocks(helper);
+                if (!blocked) {
+                    entry.cachedInterior = interiorBlocks;
+                    entry.cachedFrame = getFrameBlocks(helper);
+                }
                 entry.cachedFlammable = flammable;
                 entry.cachedLava = lava;
                 entry.cachedFirePositions = firePositions;
                 entry.cachedFireCount = firePositions.size();
-                entry.perTickProbability = PortalLightProbability.compute(
+                entry.perTickProbability = blocked ? 0 : PortalLightProbability.compute(
                         world, interiorBlocks, currentDifficulty, entry.pendingExtinguish.keySet());
 
                 entry.scheduler.tick(world, interiorBlocks, currentTick, currentDifficulty,
                         entry.pendingExtinguish.keySet());
 
-                activeEntries.add(entry);
+                if (!blocked) {
+                    activeEntries.add(entry);
+                }
             }
 
             if (!activeEntries.isEmpty()) {
@@ -438,6 +450,7 @@ public class WoodlightTracker {
                         BlockPos pos = interior.add(dx, dy, dz);
                         if (!seen.add(pos)) continue;
                         if (!world.getBlockState(pos).isIn(BlockTags.FIRE)) continue;
+                        if (world.getBlockState(pos.down()).isIn(world.getDimension().getInfiniburnBlocks())) continue;
                         fires.add(pos.toImmutable());
                     }
                 }

@@ -43,6 +43,7 @@ public class PortalScanResult {
         public int maxBurnSlots = 0;
 
         public boolean lit = false;
+        public boolean blocked = false;
         public double perTickProbability = 0.0;
         public int fireCount = 0;
         public final Map<BlockPos, Long> scheduledFires = new LinkedHashMap<>();
@@ -85,6 +86,7 @@ public class PortalScanResult {
             PortalData pd = new PortalData();
             pd.axis = entry.axis;
             pd.lit = entry.lit;
+            pd.blocked = entry.blocked;
 
             pd.frame.addAll(entry.cachedFrame);
             pd.interior.addAll(entry.cachedInterior);
@@ -94,13 +96,13 @@ public class PortalScanResult {
             pd.fireCount = entry.cachedFireCount;
             pd.perTickProbability = entry.perTickProbability;
 
-            pd.scheduledFires.putAll(entry.scheduler.getScheduledLavaFires());
-            pd.scheduledFires.putAll(entry.scheduler.getScheduledSpreadFires());
-            pd.scheduledBurnAway.putAll(entry.scheduler.getScheduledBurnAway());
-
             portals.add(pd);
 
             if (!pd.lit) {
+                pd.scheduledFires.putAll(entry.scheduler.getScheduledLavaFires());
+                pd.scheduledFires.putAll(entry.scheduler.getScheduledSpreadFires());
+                pd.scheduledBurnAway.putAll(entry.scheduler.getScheduledBurnAway());
+
                 portalFrame.addAll(pd.frame);
                 portalInterior.addAll(pd.interior);
                 filledBurnSlots.addAll(pd.filledBurnSlots);

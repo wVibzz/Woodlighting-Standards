@@ -46,13 +46,13 @@ public class WoodlightDebugHud {
             return;
         }
 
-        boolean hasUnlit = false;
+        boolean hasActive = false;
         for (PortalScanResult.PortalData pd : scan.portals) {
-            if (!pd.lit) { hasUnlit = true; break; }
+            if (!pd.lit && !pd.blocked) { hasActive = true; break; }
         }
 
         int totalLines = 2; // header + seed
-        if (hasUnlit) totalLines += 2; // global progress + bar
+        if (hasActive) totalLines += 2; // global progress + bar
         for (PortalScanResult.PortalData pd : scan.portals) {
             totalLines += 1; // portal header
             if (pd.lit) continue;
@@ -80,10 +80,10 @@ public class WoodlightDebugHud {
                 "Seed: §7" + scan.worldSeed + "§r | " + diffColor + diffName, x, y, 0xFFFFFF);
         y += lineH + 2;
 
-        if (hasUnlit) {
+        if (hasActive) {
             double totalRate = 0;
             for (PortalScanResult.PortalData pd : scan.portals) {
-                if (!pd.lit) totalRate += pd.perTickProbability;
+                if (!pd.lit && !pd.blocked) totalRate += pd.perTickProbability;
             }
             double remaining = Math.max(0, scan.globalTarget - scan.globalProgress);
             double etaSec = totalRate > 0 ? (remaining / totalRate) / 20.0 : 0;
@@ -109,10 +109,10 @@ public class WoodlightDebugHud {
             PortalScanResult.PortalData pd = scan.portals.get(i);
 
             String label = scan.portals.size() > 1 ? "Portal " + (i + 1) : "Portal";
-            String litTag = pd.lit ? " §a§l[LIT]" : "";
+            String stateTag = pd.lit ? " §a§l[LIT]" : pd.blocked ? " §c§l[BLOCKED]" : "";
             text.drawWithShadow(matrices,
                     "§a" + label + "§r: " + pd.interior.size() + " interior"
-                            + " §7(" + pd.axis.getName() + " axis)" + litTag,
+                            + " §7(" + pd.axis.getName() + " axis)" + stateTag,
                     x, y, 0xFFFFFF);
             y += lineH;
 

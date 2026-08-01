@@ -11,11 +11,13 @@ import net.vibzz.woodlightingstandards.util.LavaReachUtil;
 import net.vibzz.woodlightingstandards.util.LavaWeightUtil;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 
 public class FireEventScheduler {
@@ -27,11 +29,19 @@ public class FireEventScheduler {
     private final Map<BlockPos, Long> scheduledSpreadFires = new HashMap<>();
     private final Map<BlockPos, Long> scheduledBurnAway = new HashMap<>();
     private final Map<Long, Integer> positionCounters = new HashMap<>();
-    private final Set<BlockPos> knownFires = new HashSet<>();
-    private final Set<BlockPos> externalFires = new HashSet<>();
-    private final Map<BlockPos, Long> externalFireSnuff = new HashMap<>();
-    private final Map<Long, Integer> externalSnuffCounters = new HashMap<>();
+    private final Map<BlockPos, TrackedFire> trackedFires = new HashMap<>();
+    private final Map<Long, Integer> fireSeedCounters = new HashMap<>();
     private int lastDifficulty = -1;
+
+    private static final class TrackedFire {
+        final Random rng;
+        int age;
+        long nextTick;
+        TrackedFire(Random rng, long nextTick) {
+            this.rng = rng;
+            this.nextTick = nextTick;
+        }
+    }
 
     private static final ThreadLocal<Boolean> SUPPRESS_FIRE_PORTAL = ThreadLocal.withInitial(() -> Boolean.FALSE);
 
@@ -39,14 +49,23 @@ public class FireEventScheduler {
         return SUPPRESS_FIRE_PORTAL.get();
     }
 
-    private void placeFireSuppressed(ServerWorld world, BlockPos pos) {
+    private void placeFireSuppressed(ServerWorld world, BlockPos pos, long currentTick) {
         SUPPRESS_FIRE_PORTAL.set(Boolean.TRUE);
         try {
             world.setBlockState(pos, AbstractFireBlock.getState(world, pos), 3);
-            knownFires.add(pos.toImmutable());
+            registerFire(pos, currentTick);
         } finally {
             SUPPRESS_FIRE_PORTAL.set(Boolean.FALSE);
         }
+    }
+
+    private void registerFire(BlockPos pos, long currentTick) {
+        BlockPos immut = pos.toImmutable();
+        if (trackedFires.containsKey(immut)) return;
+        long key = canonicalKey(immut);
+        int count = fireSeedCounters.merge(key, 1, Integer::sum);
+        Random rng = new Random(mixSeed(worldSeed ^ mixSeed(attempt) ^ mixSeed(key) ^ mixSeed(count) ^ 0x4655454CL));
+        trackedFires.put(immut, new TrackedFire(rng, currentTick + 30 + rng.nextInt(10)));
     }
 
     public Map<BlockPos, Long> getScheduledLavaFires() { return scheduledLavaFires; }
@@ -101,7 +120,7 @@ public class FireEventScheduler {
 
         validateScheduled(world);
         integrateExternalFires(world, interiorBlocks, interiorSet, currentTick, difficulty, excludePendingFires);
-        processExternalFires(world, currentTick);
+        tickFires(world, currentTick);
         scheduleLavaFires(world, interiorBlocks, interiorSet, currentTick);
         processScheduledLavaFires(world, interiorSet, currentTick, difficulty);
         processScheduledSpreadFires(world, interiorSet, currentTick, difficulty);
@@ -122,10 +141,9 @@ public class FireEventScheduler {
                         if (interiorSet.contains(pos)) continue;
                         if (!world.getBlockState(pos).isIn(net.minecraft.tag.BlockTags.FIRE)) continue;
                         BlockPos immut = pos.toImmutable();
-                        if (knownFires.contains(immut)) continue;
+                        if (trackedFires.containsKey(immut)) continue;
                         if (!excludePendingFires.isEmpty() && excludePendingFires.contains(immut)) continue;
-                        knownFires.add(immut);
-                        externalFires.add(immut);
+                        registerFire(immut, currentTick);
                         newlyDiscovered.add(immut);
                     }
                 }
@@ -136,42 +154,61 @@ public class FireEventScheduler {
         }
     }
 
-    private void processExternalFires(ServerWorld world, long currentTick) {
-        Iterator<BlockPos> it = externalFires.iterator();
-        while (it.hasNext()) {
-            BlockPos pos = it.next();
+    private void tickFires(ServerWorld world, long currentTick) {
+        if (trackedFires.isEmpty()) return;
+        List<BlockPos> positions = new ArrayList<>(trackedFires.keySet());
+        positions.sort(Comparator.comparingLong(BlockPos::asLong));
+
+        for (BlockPos pos : positions) {
+            TrackedFire fire = trackedFires.get(pos);
+            if (fire == null) continue;
+
             if (!world.getBlockState(pos).isIn(net.minecraft.tag.BlockTags.FIRE)) {
-                it.remove();
-                externalFireSnuff.remove(pos);
-                knownFires.remove(pos);
+                trackedFires.remove(pos);
                 continue;
             }
-            if (hasBurnableNeighbor(world, pos)) {
-                externalFireSnuff.remove(pos);
-                continue;
+            if (currentTick < fire.nextTick) continue;
+
+            BlockPos below = pos.down();
+            BlockState belowState = world.getBlockState(below);
+            boolean infiniburn = belowState.isIn(world.getDimension().getInfiniburnBlocks());
+
+            if (!infiniburn) {
+                if (world.isRaining() && isRainingAround(world, pos)
+                        && fire.rng.nextFloat() < 0.2f + fire.age * 0.03f) {
+                    extinguish(world, pos);
+                    continue;
+                }
             }
-            Long snuffAt = externalFireSnuff.get(pos);
-            if (snuffAt == null) {
-                externalFireSnuff.put(pos, currentTick + externalFireSnuffDelay(world, pos));
-                continue;
+
+            int ageBefore = fire.age;
+            fire.age = Math.min(15, fire.age + fire.rng.nextInt(3) / 2);
+
+            if (!infiniburn) {
+                if (!hasFlammableNeighbor(world, pos)) {
+                    if (!belowState.isSideSolidFullSquare(world, below, Direction.UP) || ageBefore > 3) {
+                        extinguish(world, pos);
+                        continue;
+                    }
+                } else if (ageBefore == 15 && fire.rng.nextInt(4) == 0
+                        && FlammableBlockUtil.getBurnChance(belowState) == 0) {
+                    extinguish(world, pos);
+                    continue;
+                }
             }
-            if (currentTick >= snuffAt) {
-                world.setBlockState(pos, net.minecraft.block.Blocks.AIR.getDefaultState(), 3);
-                it.remove();
-                externalFireSnuff.remove(pos);
-                knownFires.remove(pos);
-            }
+
+            fire.nextTick = currentTick + 30 + fire.rng.nextInt(10);
         }
     }
 
-    private long externalFireSnuffDelay(ServerWorld world, BlockPos pos) {
-        BlockPos below = pos.down();
-        boolean solidBelow = world.getBlockState(below).isSideSolidFullSquare(world, below, Direction.UP);
-        long key = canonicalKey(pos);
-        int count = externalSnuffCounters.merge(key, 1, Integer::sum);
-        long hash = mixSeed(worldSeed ^ mixSeed(attempt) ^ mixSeed(key) ^ mixSeed(count) ^ 0x4655454CL);
-        double uniform = (double) (hash & 0x7FFFFFFFFFFFFFFFL) / ((double) Long.MAX_VALUE + 1.0);
-        return solidBelow ? 300 + (long) (uniform * 200) : 30 + (long) (uniform * 10);
+    private void extinguish(ServerWorld world, BlockPos pos) {
+        world.setBlockState(pos, net.minecraft.block.Blocks.AIR.getDefaultState(), 3);
+        trackedFires.remove(pos);
+    }
+
+    private static boolean isRainingAround(ServerWorld world, BlockPos pos) {
+        return world.hasRain(pos) || world.hasRain(pos.west()) || world.hasRain(pos.east())
+                || world.hasRain(pos.north()) || world.hasRain(pos.south());
     }
 
     private void rescheduleSpreadFires(ServerWorld world, long currentTick, int newDifficulty) {
@@ -188,41 +225,25 @@ public class FireEventScheduler {
     }
 
     private void validateScheduled(ServerWorld world) {
-        java.util.function.Predicate<Map.Entry<BlockPos, Long>> invalidFire = entry -> {
+        scheduledLavaFires.entrySet().removeIf(entry -> {
             BlockPos pos = entry.getKey();
             if (!world.getBlockState(pos).isAir()) return true;
             if (!hasBurnableNeighbor(world, pos)) return true;
-            return !hasIgnitionSource(world, pos);
-        };
-        scheduledLavaFires.entrySet().removeIf(invalidFire);
-        scheduledSpreadFires.entrySet().removeIf(invalidFire);
+            return computeTargetProbability(world, pos) <= 0;
+        });
+
+        scheduledSpreadFires.entrySet().removeIf(entry -> {
+            BlockPos pos = entry.getKey();
+            if (!world.getBlockState(pos).isAir()) return true;
+            if (!hasBurnableNeighbor(world, pos)) return true;
+            return !hasFireNeighbor(world, pos);
+        });
 
         scheduledBurnAway.entrySet().removeIf(entry -> {
             BlockPos pos = entry.getKey();
             if (!FlammableBlockUtil.isFlammable(world.getBlockState(pos))) return true;
             return !hasFireNeighbor(world, pos);
         });
-
-        knownFires.removeIf(pos -> !world.getBlockState(pos).isIn(net.minecraft.tag.BlockTags.FIRE));
-    }
-
-    private boolean hasIgnitionSource(ServerWorld world, BlockPos pos) {
-        for (Direction dir : Direction.values()) {
-            if (world.getBlockState(pos.offset(dir)).isIn(net.minecraft.tag.BlockTags.FIRE)) return true;
-        }
-
-        for (int dx = -3; dx <= 3; dx++) {
-            for (int dy = -3; dy <= 0; dy++) {
-                for (int dz = -3; dz <= 3; dz++) {
-                    BlockPos checkPos = pos.add(dx, dy, dz);
-                    if (world.getFluidState(checkPos).isIn(FluidTags.LAVA)) {
-                        if (LavaReachUtil.canLavaReachSlot(world, checkPos, pos)) return true;
-                    }
-                }
-            }
-        }
-
-        return false;
     }
 
     private void scheduleLavaFires(ServerWorld world, List<BlockPos> interiorBlocks, Set<BlockPos> interiorSet, long currentTick) {
@@ -301,7 +322,7 @@ public class FireEventScheduler {
 
             if (!world.getBlockState(pos).isAir()) continue;
 
-            placeFireSuppressed(world, pos);
+            placeFireSuppressed(world, pos, currentTick);
             placed.add(pos);
         }
         for (BlockPos pos : placed) {
@@ -322,7 +343,7 @@ public class FireEventScheduler {
             BlockState state = world.getBlockState(pos);
             if (!FlammableBlockUtil.isFlammable(state)) continue;
 
-            placeFireSuppressed(world, pos);
+            placeFireSuppressed(world, pos, currentTick);
             burned.add(pos);
         }
         for (BlockPos pos : burned) {
@@ -383,6 +404,13 @@ public class FireEventScheduler {
     private static boolean hasBurnableNeighbor(ServerWorld world, BlockPos pos) {
         for (Direction dir : Direction.values()) {
             if (world.getBlockState(pos.offset(dir)).getMaterial().isBurnable()) return true;
+        }
+        return false;
+    }
+
+    private static boolean hasFlammableNeighbor(ServerWorld world, BlockPos pos) {
+        for (Direction dir : Direction.values()) {
+            if (FlammableBlockUtil.isFlammable(world.getBlockState(pos.offset(dir)))) return true;
         }
         return false;
     }

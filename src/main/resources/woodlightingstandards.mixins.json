@@ -8,6 +8,7 @@
     "AreaHelperAccessor",
     "FireBlockMixin",
     "LavaFluidMixin",
+    "MinecraftServerMixin",
     "ServerWorldMixin"
   ],
   "client": [

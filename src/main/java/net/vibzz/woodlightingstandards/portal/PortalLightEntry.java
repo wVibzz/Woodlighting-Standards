@@ -21,6 +21,7 @@ public class PortalLightEntry {
     public final FireEventScheduler scheduler;
     public volatile double perTickProbability;
     public volatile boolean lit;
+    public volatile boolean blocked;
     public final Map<BlockPos, Long> pendingExtinguish = new ConcurrentHashMap<>();
     public volatile List<BlockPos> cachedInterior = new ArrayList<>();
     public volatile List<BlockPos> cachedFrame = new ArrayList<>();
