@@ -69,7 +69,10 @@ remapJar {
 def configFile = file("src/main/java/net/vibzz/woodlightingstandards/WoodlightBuildConfig.java")
 
 task compileReleaseJava(type: JavaCompile) {
-    source = sourceSets.main.java
+    source = sourceSets.main.java.matching {
+        exclude 'net/vibzz/woodlightingstandards/client/**'
+        exclude 'net/vibzz/woodlightingstandards/mixin/client/**'
+    }
     classpath = sourceSets.main.compileClasspath
     destinationDirectory = file("${buildDir}/classes/release")
     options.encoding = "UTF-8"
@@ -87,9 +90,30 @@ task compileReleaseJava(type: JavaCompile) {
     }
 }
 
-task releaseJar(type: Jar, dependsOn: [compileReleaseJava, processResources]) {
+// Strip the client entrypoint and client mixins so the release jar declares nothing debug-related
+task prepareReleaseResources(type: Copy) {
+    dependsOn processResources
+    from sourceSets.main.output.resourcesDir
+    into "${buildDir}/release-resources"
+
+    doLast {
+        def outDir = file("${buildDir}/release-resources")
+
+        def modFile = new File(outDir, "fabric.mod.json")
+        def mod = new groovy.json.JsonSlurper().parseText(modFile.text)
+        mod.entrypoints?.remove("client")
+        modFile.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(mod))
+
+        def mixinFile = new File(outDir, "woodlightingstandards.mixins.json")
+        def mixins = new groovy.json.JsonSlurper().parseText(mixinFile.text)
+        mixins.remove("client")
+        mixinFile.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(mixins))
+    }
+}
+
+task releaseJar(type: Jar, dependsOn: [compileReleaseJava, prepareReleaseResources]) {
     from("${buildDir}/classes/release")
-    from(sourceSets.main.output.resourcesDir)
+    from("${buildDir}/release-resources")
     from("LICENSE") {
         rename { "${it}_${project.archives_base_name}" }
     }
