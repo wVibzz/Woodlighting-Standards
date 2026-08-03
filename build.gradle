@@ -52,7 +52,7 @@ java {
     // withSourcesJar() — disabled, not needed for distribution
 }
 
-// Default build produces the DEBUG jar (DEBUG = true in source)
+// Default build produces the DEBUG jar
 jar {
     from("LICENSE") {
         rename { "${it}_${project.archives_base_name}" }
@@ -64,9 +64,7 @@ remapJar {
     archiveClassifier = 'DEBUG'
 }
 
-// Release jar: recompile with DEBUG = false, then remap
-
-def configFile = file("src/main/java/net/vibzz/woodlightingstandards/WoodlightBuildConfig.java")
+// Release jar: recompile without the client/ files, then remap
 
 task compileReleaseJava(type: JavaCompile) {
     source = sourceSets.main.java.matching {
@@ -78,15 +76,6 @@ task compileReleaseJava(type: JavaCompile) {
     options.encoding = "UTF-8"
     if (targetJavaVersion >= 10 || JavaVersion.current().isJava10Compatible()) {
         options.release.set(targetJavaVersion)
-    }
-
-    doFirst {
-        // Swap to release mode
-        configFile.text = configFile.text.replace("DEBUG = true", "DEBUG = false")
-    }
-    doLast {
-        // Restore for dev
-        configFile.text = configFile.text.replace("DEBUG = false", "DEBUG = true")
     }
 }
 

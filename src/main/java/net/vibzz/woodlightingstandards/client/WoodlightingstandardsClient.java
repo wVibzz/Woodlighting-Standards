@@ -4,7 +4,6 @@ import net.fabricmc.api.ClientModInitializer;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.options.KeyBinding;
 import net.minecraft.client.util.InputUtil;
-import net.vibzz.woodlightingstandards.WoodlightBuildConfig;
 import net.vibzz.woodlightingstandards.client.debug.PortalScanResult;
 import net.vibzz.woodlightingstandards.mixin.client.GameOptionsAccessor;
 import org.lwjgl.glfw.GLFW;
@@ -19,8 +18,6 @@ public class WoodlightingstandardsClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        if (!WoodlightBuildConfig.DEBUG) return;
-
         scanKey = new KeyBinding(
                 "key.woodlightingstandards.scan",
                 InputUtil.Type.KEYSYM,
@@ -44,12 +41,10 @@ public class WoodlightingstandardsClient implements ClientModInitializer {
     }
 
     public static boolean isDebugVisible() {
-        return WoodlightBuildConfig.DEBUG && debugVisible;
+        return debugVisible;
     }
 
     public static void onClientTick(MinecraftClient client) {
-        if (!WoodlightBuildConfig.DEBUG) return;
-
         ensureKeysRegistered();
 
         if (client.world == null || client.player == null) return;
