@@ -11,29 +11,29 @@ import net.minecraft.world.WorldAccess;
 public class LavaReachUtil {
 
     public static boolean canLavaReachSlot(WorldAccess world, BlockPos lavaPos, BlockPos airPos) {
-        int dx = airPos.getX() - lavaPos.getX();
-        int dy = airPos.getY() - lavaPos.getY();
-        int dz = airPos.getZ() - lavaPos.getZ();
+        int deltaX = airPos.getX() - lavaPos.getX();
+        int deltaY = airPos.getY() - lavaPos.getY();
+        int deltaZ = airPos.getZ() - lavaPos.getZ();
 
         // Branch 2 and branch 1 (i=1) both reach (+-1X, +1Y, +-1Z)
-        if (dy == 1 && dx >= -1 && dx <= 1 && dz >= -1 && dz <= 1) {
+        if (deltaY == 1 && deltaX >= -1 && deltaX <= 1 && deltaZ >= -1 && deltaZ <= 1) {
             return true;
         }
 
         // Branch 1 (i=2): two steps, fire at (+-2X, +2Y, +-2Z) from lava
-        if (dy == 2 && dx >= -2 && dx <= 2 && dz >= -2 && dz <= 2) {
-            // Check if any valid step1 path exists (not blocked)
-            for (int s1dx = -1; s1dx <= 1; s1dx++) {
-                for (int s1dz = -1; s1dz <= 1; s1dz++) {
-                    int s2dx = dx - s1dx;
-                    int s2dz = dz - s1dz;
-                    if (s2dx < -1 || s2dx > 1 || s2dz < -1 || s2dz > 1) continue;
+        if (deltaY == 2 && deltaX >= -2 && deltaX <= 2 && deltaZ >= -2 && deltaZ <= 2) {
+            // Check if any valid first-step path exists (not blocked)
+            for (int firstStepX = -1; firstStepX <= 1; firstStepX++) {
+                for (int firstStepZ = -1; firstStepZ <= 1; firstStepZ++) {
+                    int secondStepX = deltaX - firstStepX;
+                    int secondStepZ = deltaZ - firstStepZ;
+                    if (secondStepX < -1 || secondStepX > 1 || secondStepZ < -1 || secondStepZ > 1) continue;
 
-                    BlockPos step1 = lavaPos.add(s1dx, 1, s1dz);
-                    BlockState state1 = world.getBlockState(step1);
-                    if (state1.getMaterial().blocksMovement()) continue;
+                    BlockPos firstStepPos = lavaPos.add(firstStepX, 1, firstStepZ);
+                    BlockState firstStepState = world.getBlockState(firstStepPos);
+                    if (firstStepState.getMaterial().blocksMovement()) continue;
 
-                    // Step 1 passable, step 2 can reach target
+                    // First step passable, second step can reach target
                     return true;
                 }
             }

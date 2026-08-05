@@ -16,62 +16,62 @@ public class LavaWeightUtil {
 
     public static double calculateWeight(WorldAccess world, BlockPos lavaPos, BlockPos airPos,
                                          boolean airHasBurnableNeighbor) {
-        int dx = airPos.getX() - lavaPos.getX();
-        int dy = airPos.getY() - lavaPos.getY();
-        int dz = airPos.getZ() - lavaPos.getZ();
+        int deltaX = airPos.getX() - lavaPos.getX();
+        int deltaY = airPos.getY() - lavaPos.getY();
+        int deltaZ = airPos.getZ() - lavaPos.getZ();
 
         double weight = 0;
-        weight += branch2Weight(world, lavaPos, dx, dy, dz);
-        weight += branch1Step1Weight(dx, dy, dz, airHasBurnableNeighbor);
-        weight += branch1Step2Weight(world, lavaPos, dx, dy, dz, airHasBurnableNeighbor);
+        weight += branch2Weight(world, lavaPos, deltaX, deltaY, deltaZ);
+        weight += branch1Step1Weight(deltaX, deltaY, deltaZ, airHasBurnableNeighbor);
+        weight += branch1Step2Weight(world, lavaPos, deltaX, deltaY, deltaZ, airHasBurnableNeighbor);
         return weight;
     }
 
     // i=0 (1/3 chance), 3 attempts
     // blockPos2 = lava.add(randDx, 0, randDz), fire at blockPos2.up()
     // Vanilla checks hasBurnableBlock(blockPos2) = Material.isBurnable() at blockPos2
-    private static double branch2Weight(WorldAccess world, BlockPos lavaPos, int dx, int dy, int dz) {
-        if (dy != 1) return 0;
-        if (dx < -1 || dx > 1 || dz < -1 || dz > 1) return 0;
+    private static double branch2Weight(WorldAccess world, BlockPos lavaPos, int deltaX, int deltaY, int deltaZ) {
+        if (deltaY != 1) return 0;
+        if (deltaX < -1 || deltaX > 1 || deltaZ < -1 || deltaZ > 1) return 0;
 
-        BlockPos blockPos2 = lavaPos.add(dx, 0, dz);
-        if (!world.getBlockState(blockPos2).getMaterial().isBurnable()) return 0;
+        BlockPos supportPos = lavaPos.add(deltaX, 0, deltaZ);
+        if (!world.getBlockState(supportPos).getMaterial().isBurnable()) return 0;
 
-        double pHit = 1.0 - Math.pow(8.0 / 9, 3);
-        return (1.0 / 3) * pHit;
+        double hitChance = 1.0 - Math.pow(8.0 / 9, 3);
+        return (1.0 / 3) * hitChance;
     }
 
     // i=1 or i=2 first step (2/3 chance), step to (+-1X, +1Y, +-1Z)
     // Both i=1 and i=2 take a first step at +1Y. If it lands on the target
     // and canLightFire passes, fire is placed and the method returns.
-    private static double branch1Step1Weight(int dx, int dy, int dz, boolean airHasBurnableNeighbor) {
+    private static double branch1Step1Weight(int deltaX, int deltaY, int deltaZ, boolean airHasBurnableNeighbor) {
         if (!airHasBurnableNeighbor) return 0;
-        if (dy != 1) return 0;
-        if (dx < -1 || dx > 1 || dz < -1 || dz > 1) return 0;
+        if (deltaY != 1) return 0;
+        if (deltaX < -1 || deltaX > 1 || deltaZ < -1 || deltaZ > 1) return 0;
         return (2.0 / 3) * (1.0 / 9);
     }
 
     // i=2 (1/3 chance), two steps each (+-1X, +1Y, +-1Z)
     // Step 1 can place fire and return early, or hit solid and return.
     private static double branch1Step2Weight(WorldAccess world, BlockPos lavaPos,
-                                             int dx, int dy, int dz, boolean airHasBurnableNeighbor) {
+                                             int deltaX, int deltaY, int deltaZ, boolean airHasBurnableNeighbor) {
         if (!airHasBurnableNeighbor) return 0;
-        if (dy != 2) return 0;
-        if (dx < -2 || dx > 2 || dz < -2 || dz > 2) return 0;
+        if (deltaY != 2) return 0;
+        if (deltaX < -2 || deltaX > 2 || deltaZ < -2 || deltaZ > 2) return 0;
 
         double prob = 0;
-        for (int s1dx = -1; s1dx <= 1; s1dx++) {
-            for (int s1dz = -1; s1dz <= 1; s1dz++) {
-                int s2dx = dx - s1dx;
-                int s2dz = dz - s1dz;
-                if (s2dx < -1 || s2dx > 1 || s2dz < -1 || s2dz > 1) continue;
+        for (int firstStepX = -1; firstStepX <= 1; firstStepX++) {
+            for (int firstStepZ = -1; firstStepZ <= 1; firstStepZ++) {
+                int secondStepX = deltaX - firstStepX;
+                int secondStepZ = deltaZ - firstStepZ;
+                if (secondStepX < -1 || secondStepX > 1 || secondStepZ < -1 || secondStepZ > 1) continue;
 
-                BlockPos step1Pos = lavaPos.add(s1dx, 1, s1dz);
-                BlockState step1State = world.getBlockState(step1Pos);
+                BlockPos firstStepPos = lavaPos.add(firstStepX, 1, firstStepZ);
+                BlockState firstStepState = world.getBlockState(firstStepPos);
 
-                if (step1State.getMaterial().blocksMovement()) continue;
+                if (firstStepState.getMaterial().blocksMovement()) continue;
 
-                if (step1State.isAir() && canLightFire(world, step1Pos)) continue;
+                if (firstStepState.isAir() && canLightFire(world, firstStepPos)) continue;
 
                 prob += 1.0 / 81.0;
             }

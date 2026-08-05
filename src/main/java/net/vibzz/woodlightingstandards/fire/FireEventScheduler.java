@@ -2,6 +2,7 @@ package net.vibzz.woodlightingstandards.fire;
 
 import net.minecraft.block.AbstractFireBlock;
 import net.minecraft.block.BlockState;
+import net.minecraft.block.FireBlock;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.tag.FluidTags;
 import net.minecraft.util.math.BlockPos;
@@ -27,6 +28,7 @@ public class FireEventScheduler {
 
     private final Map<BlockPos, Long> scheduledLavaFires = new HashMap<>();
     private final Map<BlockPos, Long> scheduledSpreadFires = new HashMap<>();
+    private final Map<BlockPos, Integer> spreadResistances = new HashMap<>();
     private final Map<BlockPos, Long> scheduledBurnAway = new HashMap<>();
     private final Map<Long, Integer> positionCounters = new HashMap<>();
     private final Map<BlockPos, TrackedFire> trackedFires = new HashMap<>();
@@ -89,23 +91,23 @@ public class FireEventScheduler {
 
     /** Position key invariant under mirroring and axis rotation. */
     private long canonicalKey(BlockPos pos) {
-        int dx = pos.getX() - portalOrigin.getX();
-        int dy = pos.getY() - portalOrigin.getY();
-        int dz = pos.getZ() - portalOrigin.getZ();
+        int relX = pos.getX() - portalOrigin.getX();
+        int relY = pos.getY() - portalOrigin.getY();
+        int relZ = pos.getZ() - portalOrigin.getZ();
 
-        int u, v;
+        int alongWidth, depth;
         if (portalAxis == Direction.Axis.X) {
-            u = dx;
-            v = dz;
+            alongWidth = relX;
+            depth = relZ;
         } else {
-            u = dz;
-            v = dx;
+            alongWidth = relZ;
+            depth = relX;
         }
 
-        int uCanonical = Math.min(u, (portalWidth - 1) - u);
-        int vCanonical = Math.abs(v);
+        int mirroredWidth = Math.min(alongWidth, (portalWidth - 1) - alongWidth);
+        int mirroredDepth = Math.abs(depth);
 
-        return BlockPos.asLong(uCanonical, dy, vCanonical);
+        return BlockPos.asLong(mirroredWidth, relY, mirroredDepth);
     }
 
     /** @param excludePendingFires fires fading out post-detection that should not be integrated. */
@@ -133,10 +135,10 @@ public class FireEventScheduler {
         Set<BlockPos> seen = new HashSet<>();
         List<BlockPos> newlyDiscovered = new ArrayList<>();
         for (BlockPos interior : interiorBlocks) {
-            for (int dx = -5; dx <= 5; dx++) {
-                for (int dy = -5; dy <= 5; dy++) {
-                    for (int dz = -5; dz <= 5; dz++) {
-                        BlockPos pos = interior.add(dx, dy, dz);
+            for (int offsetX = -5; offsetX <= 5; offsetX++) {
+                for (int offsetY = -5; offsetY <= 5; offsetY++) {
+                    for (int offsetZ = -5; offsetZ <= 5; offsetZ++) {
+                        BlockPos pos = interior.add(offsetX, offsetY, offsetZ);
                         if (!seen.add(pos)) continue;
                         if (interiorSet.contains(pos)) continue;
                         if (!world.getBlockState(pos).isIn(net.minecraft.tag.BlockTags.FIRE)) continue;
@@ -183,6 +185,12 @@ public class FireEventScheduler {
 
             int ageBefore = fire.age;
             fire.age = Math.min(15, fire.age + fire.rng.nextInt(3) / 2);
+            if (fire.age != ageBefore) {
+                BlockState fireState = world.getBlockState(pos);
+                if (fireState.contains(FireBlock.AGE)) {
+                    world.setBlockState(pos, fireState.with(FireBlock.AGE, fire.age), 4);
+                }
+            }
 
             if (!infiniburn) {
                 if (!hasFlammableNeighbor(world, pos)) {
@@ -215,13 +223,15 @@ public class FireEventScheduler {
         Map<BlockPos, Long> rescheduled = new HashMap<>();
         for (Map.Entry<BlockPos, Long> entry : scheduledSpreadFires.entrySet()) {
             BlockPos pos = entry.getKey();
-            double spreadProb = computeFireSpreadProbability(world, pos, newDifficulty);
+            int spreadResistance = spreadResistances.getOrDefault(pos, 100);
+            double spreadProb = computeFireSpreadProbability(world, pos, newDifficulty, spreadResistance);
             if (spreadProb > 0) {
                 rescheduled.put(pos, currentTick + probabilityToTicks(spreadProb, pos));
             }
         }
         scheduledSpreadFires.clear();
         scheduledSpreadFires.putAll(rescheduled);
+        spreadResistances.keySet().retainAll(rescheduled.keySet());
     }
 
     private void validateScheduled(ServerWorld world) {
@@ -244,6 +254,8 @@ public class FireEventScheduler {
             if (!FlammableBlockUtil.isFlammable(world.getBlockState(pos))) return true;
             return !hasFireNeighbor(world, pos);
         });
+
+        spreadResistances.keySet().retainAll(scheduledSpreadFires.keySet());
     }
 
     private void scheduleLavaFires(ServerWorld world, List<BlockPos> interiorBlocks, Set<BlockPos> interiorSet, long currentTick) {
@@ -265,10 +277,10 @@ public class FireEventScheduler {
         List<BlockPos> targets = new ArrayList<>();
 
         for (BlockPos interior : interiorBlocks) {
-            for (int dx = -2; dx <= 2; dx++) {
-                for (int dy = -1; dy <= 2; dy++) {
-                    for (int dz = -2; dz <= 2; dz++) {
-                        BlockPos candidate = interior.add(dx, dy, dz);
+            for (int offsetX = -2; offsetX <= 2; offsetX++) {
+                for (int offsetY = -1; offsetY <= 2; offsetY++) {
+                    for (int offsetZ = -2; offsetZ <= 2; offsetZ++) {
+                        BlockPos candidate = interior.add(offsetX, offsetY, offsetZ);
                         if (interiorSet.contains(candidate)) continue;
                         if (!world.getBlockState(candidate).isAir()) continue;
                         if (!hasBurnableNeighbor(world, candidate)) continue;
@@ -285,15 +297,15 @@ public class FireEventScheduler {
         boolean hasBurnableNeighbor = hasBurnableNeighbor(world, airPos);
         double prob = 0;
 
-        for (int dx = -3; dx <= 3; dx++) {
-            for (int dy = -3; dy <= 0; dy++) {
-                for (int dz = -3; dz <= 3; dz++) {
-                    BlockPos checkPos = airPos.add(dx, dy, dz);
-                    if (!world.getFluidState(checkPos).isIn(FluidTags.LAVA)) continue;
-                    if (!LavaReachUtil.canLavaReachSlot(world, checkPos, airPos)) continue;
+        for (int offsetX = -3; offsetX <= 3; offsetX++) {
+            for (int offsetY = -3; offsetY <= 0; offsetY++) {
+                for (int offsetZ = -3; offsetZ <= 3; offsetZ++) {
+                    BlockPos lavaPos = airPos.add(offsetX, offsetY, offsetZ);
+                    if (!world.getFluidState(lavaPos).isIn(FluidTags.LAVA)) continue;
+                    if (!LavaReachUtil.canLavaReachSlot(world, lavaPos, airPos)) continue;
 
                     double weight = LavaWeightUtil.calculateWeight(
-                            world, checkPos, airPos, hasBurnableNeighbor);
+                            world, lavaPos, airPos, hasBurnableNeighbor);
                     prob += LAVA_TICK_CHANCE * weight;
                 }
             }
@@ -363,28 +375,46 @@ public class FireEventScheduler {
                     scheduledBurnAway.put(neighbor.toImmutable(), currentTick + burnTime);
                 }
             }
+        }
 
-            if (neighborState.isAir() && hasBurnableNeighbor(world, neighbor)
-                    && !scheduledLavaFires.containsKey(neighbor) && !scheduledSpreadFires.containsKey(neighbor)) {
-                double spreadProb = computeFireSpreadProbability(world, neighbor, difficulty);
-                if (spreadProb > 0) {
-                    long spreadTick = currentTick + probabilityToTicks(spreadProb, neighbor);
-                    scheduledSpreadFires.put(neighbor.toImmutable(), spreadTick);
+        for (int offsetX = -1; offsetX <= 1; offsetX++) {
+            for (int offsetZ = -1; offsetZ <= 1; offsetZ++) {
+                for (int offsetY = -1; offsetY <= 4; offsetY++) {
+                    if (offsetX == 0 && offsetY == 0 && offsetZ == 0) continue;
+
+                    BlockPos target = firePos.add(offsetX, offsetY, offsetZ);
+                    if (interiorSet.contains(target)) continue;
+                    if (!world.getBlockState(target).isAir()) continue;
+                    if (scheduledLavaFires.containsKey(target) || scheduledSpreadFires.containsKey(target)) continue;
+
+                    int spreadResistance = 100;
+                    if (offsetY > 1) spreadResistance += (offsetY - 1) * 100;
+
+                    double spreadProb = computeFireSpreadProbability(world, target, difficulty, spreadResistance);
+                    if (spreadProb > 0) {
+                        long spreadTick = currentTick + probabilityToTicks(spreadProb, target);
+                        scheduledSpreadFires.put(target.toImmutable(), spreadTick);
+                        spreadResistances.put(target.toImmutable(), spreadResistance);
+                    }
                 }
             }
         }
     }
 
-    private double computeFireSpreadProbability(ServerWorld world, BlockPos airPos, int difficulty) {
-        int maxBurn = 0;
+    private double computeFireSpreadProbability(ServerWorld world, BlockPos airPos, int difficulty, int spreadResistance) {
+        int maxBurnChance = 0;
         for (Direction dir : Direction.values()) {
-            int burn = FlammableBlockUtil.getBurnChance(world.getBlockState(airPos.offset(dir)));
-            if (burn > maxBurn) maxBurn = burn;
+            int burnChance = FlammableBlockUtil.getBurnChance(world.getBlockState(airPos.offset(dir)));
+            if (burnChance > maxBurnChance) maxBurnChance = burnChance;
         }
-        if (maxBurn == 0) return 0;
+        if (maxBurnChance == 0) return 0;
+        if (world.isRaining() && isRainingAround(world, airPos)) return 0;
 
-        double q = (maxBurn + 40.0 + difficulty * 7) / 30.0;
-        double perFireTick = Math.min(1.0, (q + 1) / 100.0);
+        int igniteChance = (maxBurnChance + 40 + difficulty * 7) / 30;
+        if (world.hasHighHumidity(airPos)) igniteChance /= 2;
+        if (igniteChance <= 0) return 0;
+
+        double perFireTick = Math.min(1.0, (igniteChance + 1.0) / spreadResistance);
         return perFireTick / AVG_FIRE_TICK_INTERVAL;
     }
 
