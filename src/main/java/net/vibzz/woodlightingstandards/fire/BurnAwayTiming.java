@@ -1,7 +1,7 @@
 package net.vibzz.woodlightingstandards.fire;
 
-import net.minecraft.block.BlockState;
-import net.vibzz.woodlightingstandards.util.FlammableBlockUtil;
+import net.minecraft.block.BlockState;import net.vibzz.woodlightingstandards.util.FireUtil;
+import net.vibzz.woodlightingstandards.util.SeedUtil;
 
 /**
  * Computes deterministic burn-away times for flammable blocks near portals.
@@ -14,13 +14,13 @@ public class BurnAwayTiming {
     private static final int SPREAD_FACTOR = 300;
 
     public static int getMinTicks(BlockState state) {
-        int spreadChance = FlammableBlockUtil.getSpreadChance(state);
+        int spreadChance = FireUtil.getSpreadChance(state);
         if (spreadChance <= 0) return -1;
         return (int) ((SPREAD_FACTOR / (double) spreadChance) * 0.3 * AVG_FIRE_TICK);
     }
 
     public static int getMaxTicks(BlockState state) {
-        int spreadChance = FlammableBlockUtil.getSpreadChance(state);
+        int spreadChance = FireUtil.getSpreadChance(state);
         if (spreadChance <= 0) return -1;
         return (int) ((SPREAD_FACTOR / (double) spreadChance) * 2.5 * AVG_FIRE_TICK);
     }
@@ -30,19 +30,9 @@ public class BurnAwayTiming {
         int max = getMaxTicks(state);
         if (min < 0 || max < 0) return -1;
 
-        int spreadChance = FlammableBlockUtil.getSpreadChance(state);
-        long hash = mixSeed(worldSeed ^ mixSeed(spreadChance) ^ mixSeed(positionKey));
-        double uniform = (double) (hash & 0x7FFFFFFFFFFFFFFFL) / (double) Long.MAX_VALUE;
+        int spreadChance = FireUtil.getSpreadChance(state);
+        long hash = SeedUtil.mixSeed(worldSeed ^ SeedUtil.mixSeed(spreadChance) ^ SeedUtil.mixSeed(positionKey));
 
-        return min + (int) (uniform * (max - min));
-    }
-
-    private static long mixSeed(long seed) {
-        seed ^= (seed >>> 30);
-        seed *= 0xbf58476d1ce4e5b9L;
-        seed ^= (seed >>> 27);
-        seed *= 0x94d049bb133111ebL;
-        seed ^= (seed >>> 31);
-        return seed;
+        return min + (int) (SeedUtil.toUniform(hash) * (max - min));
     }
 }

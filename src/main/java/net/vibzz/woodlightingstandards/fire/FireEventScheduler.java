@@ -6,10 +6,9 @@ import net.minecraft.block.FireBlock;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.tag.FluidTags;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.vibzz.woodlightingstandards.util.FlammableBlockUtil;
-import net.vibzz.woodlightingstandards.util.LavaReachUtil;
-import net.vibzz.woodlightingstandards.util.LavaWeightUtil;
+import net.minecraft.util.math.Direction;import net.vibzz.woodlightingstandards.util.FireUtil;
+import net.vibzz.woodlightingstandards.util.LavaUtil;
+import net.vibzz.woodlightingstandards.util.SeedUtil;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -23,8 +22,6 @@ import java.util.Set;
 
 public class FireEventScheduler {
 
-    private static final double LAVA_TICK_CHANCE = 6.0 / 4096.0;
-    private static final double AVG_FIRE_TICK_INTERVAL = 34.5;
 
     private final Map<BlockPos, Long> scheduledLavaFires = new HashMap<>();
     private final Map<BlockPos, Long> scheduledSpreadFires = new HashMap<>();
@@ -66,7 +63,7 @@ public class FireEventScheduler {
         if (trackedFires.containsKey(immut)) return;
         long key = canonicalKey(immut);
         int count = fireSeedCounters.merge(key, 1, Integer::sum);
-        Random rng = new Random(mixSeed(worldSeed ^ mixSeed(attempt) ^ mixSeed(key) ^ mixSeed(count) ^ 0x4655454CL));
+        Random rng = new Random(SeedUtil.mixSeed(worldSeed ^ SeedUtil.mixSeed(attempt) ^ SeedUtil.mixSeed(key) ^ SeedUtil.mixSeed(count) ^ 0x4655454CL));
         trackedFires.put(immut, new TrackedFire(rng, currentTick + 30 + rng.nextInt(10)));
     }
 
@@ -176,7 +173,7 @@ public class FireEventScheduler {
             boolean infiniburn = belowState.isIn(world.getDimension().getInfiniburnBlocks());
 
             if (!infiniburn) {
-                if (world.isRaining() && isRainingAround(world, pos)
+                if (world.isRaining() && FireUtil.isRainingAround(world, pos)
                         && fire.rng.nextFloat() < 0.2f + fire.age * 0.03f) {
                     extinguish(world, pos);
                     continue;
@@ -199,7 +196,7 @@ public class FireEventScheduler {
                         continue;
                     }
                 } else if (ageBefore == 15 && fire.rng.nextInt(4) == 0
-                        && FlammableBlockUtil.getBurnChance(belowState) == 0) {
+                        && FireUtil.getBurnChance(belowState) == 0) {
                     extinguish(world, pos);
                     continue;
                 }
@@ -214,10 +211,6 @@ public class FireEventScheduler {
         trackedFires.remove(pos);
     }
 
-    private static boolean isRainingAround(ServerWorld world, BlockPos pos) {
-        return world.hasRain(pos) || world.hasRain(pos.west()) || world.hasRain(pos.east())
-                || world.hasRain(pos.north()) || world.hasRain(pos.south());
-    }
 
     private void rescheduleSpreadFires(ServerWorld world, long currentTick, int newDifficulty) {
         Map<BlockPos, Long> rescheduled = new HashMap<>();
@@ -238,20 +231,20 @@ public class FireEventScheduler {
         scheduledLavaFires.entrySet().removeIf(entry -> {
             BlockPos pos = entry.getKey();
             if (!world.getBlockState(pos).isAir()) return true;
-            if (!hasBurnableNeighbor(world, pos)) return true;
+            if (!FireUtil.hasBurnableNeighbor(world, pos)) return true;
             return computeTargetProbability(world, pos) <= 0;
         });
 
         scheduledSpreadFires.entrySet().removeIf(entry -> {
             BlockPos pos = entry.getKey();
             if (!world.getBlockState(pos).isAir()) return true;
-            if (!hasBurnableNeighbor(world, pos)) return true;
+            if (!FireUtil.hasBurnableNeighbor(world, pos)) return true;
             return !hasFireNeighbor(world, pos);
         });
 
         scheduledBurnAway.entrySet().removeIf(entry -> {
             BlockPos pos = entry.getKey();
-            if (!FlammableBlockUtil.isFlammable(world.getBlockState(pos))) return true;
+            if (!FireUtil.isFlammable(world.getBlockState(pos))) return true;
             return !hasFireNeighbor(world, pos);
         });
 
@@ -283,7 +276,7 @@ public class FireEventScheduler {
                         BlockPos candidate = interior.add(offsetX, offsetY, offsetZ);
                         if (interiorSet.contains(candidate)) continue;
                         if (!world.getBlockState(candidate).isAir()) continue;
-                        if (!hasBurnableNeighbor(world, candidate)) continue;
+                        if (!FireUtil.hasBurnableNeighbor(world, candidate)) continue;
                         targets.add(candidate.toImmutable());
                     }
                 }
@@ -294,7 +287,7 @@ public class FireEventScheduler {
     }
 
     private double computeTargetProbability(ServerWorld world, BlockPos airPos) {
-        boolean hasBurnableNeighbor = hasBurnableNeighbor(world, airPos);
+        boolean hasBurnableNeighbor = FireUtil.hasBurnableNeighbor(world, airPos);
         double prob = 0;
 
         for (int offsetX = -3; offsetX <= 3; offsetX++) {
@@ -302,11 +295,11 @@ public class FireEventScheduler {
                 for (int offsetZ = -3; offsetZ <= 3; offsetZ++) {
                     BlockPos lavaPos = airPos.add(offsetX, offsetY, offsetZ);
                     if (!world.getFluidState(lavaPos).isIn(FluidTags.LAVA)) continue;
-                    if (!LavaReachUtil.canLavaReachSlot(world, lavaPos, airPos)) continue;
+                    if (!LavaUtil.canReach(world, lavaPos, airPos)) continue;
 
-                    double weight = LavaWeightUtil.calculateWeight(
+                    double weight = LavaUtil.ignitionChance(
                             world, lavaPos, airPos, hasBurnableNeighbor);
-                    prob += LAVA_TICK_CHANCE * weight;
+                    prob += FireUtil.LAVA_TICK_CHANCE * weight;
                 }
             }
         }
@@ -353,7 +346,7 @@ public class FireEventScheduler {
             iter.remove();
 
             BlockState state = world.getBlockState(pos);
-            if (!FlammableBlockUtil.isFlammable(state)) continue;
+            if (!FireUtil.isFlammable(state)) continue;
 
             placeFireSuppressed(world, pos, currentTick);
             burned.add(pos);
@@ -369,7 +362,7 @@ public class FireEventScheduler {
             if (interiorSet.contains(neighbor)) continue;
             BlockState neighborState = world.getBlockState(neighbor);
 
-            if (FlammableBlockUtil.isFlammable(neighborState) && !scheduledBurnAway.containsKey(neighbor)) {
+            if (FireUtil.isFlammable(neighborState) && !scheduledBurnAway.containsKey(neighbor)) {
                 int burnTime = BurnAwayTiming.calculateBurnTime(neighborState, canonicalKey(neighbor), worldSeed);
                 if (burnTime > 0) {
                     scheduledBurnAway.put(neighbor.toImmutable(), currentTick + burnTime);
@@ -404,18 +397,18 @@ public class FireEventScheduler {
     private double computeFireSpreadProbability(ServerWorld world, BlockPos airPos, int difficulty, int spreadResistance) {
         int maxBurnChance = 0;
         for (Direction dir : Direction.values()) {
-            int burnChance = FlammableBlockUtil.getBurnChance(world.getBlockState(airPos.offset(dir)));
+            int burnChance = FireUtil.getBurnChance(world.getBlockState(airPos.offset(dir)));
             if (burnChance > maxBurnChance) maxBurnChance = burnChance;
         }
         if (maxBurnChance == 0) return 0;
-        if (world.isRaining() && isRainingAround(world, airPos)) return 0;
+        if (world.isRaining() && FireUtil.isRainingAround(world, airPos)) return 0;
 
         int igniteChance = (maxBurnChance + 40 + difficulty * 7) / 30;
         if (world.hasHighHumidity(airPos)) igniteChance /= 2;
         if (igniteChance <= 0) return 0;
 
         double perFireTick = Math.min(1.0, (igniteChance + 1.0) / spreadResistance);
-        return perFireTick / AVG_FIRE_TICK_INTERVAL;
+        return perFireTick / FireUtil.AVG_FIRE_TICK_INTERVAL;
     }
 
     private int probabilityToTicks(double perTickProbability, BlockPos pos) {
@@ -425,22 +418,15 @@ public class FireEventScheduler {
         int count = positionCounters.merge(key, 1, Integer::sum);
 
         double expectedTicks = 1.0 / perTickProbability;
-        long hash = mixSeed(worldSeed ^ mixSeed(attempt) ^ mixSeed(key) ^ mixSeed(count));
-        double uniform = (double) (hash & 0x7FFFFFFFFFFFFFFFL) / (double) Long.MAX_VALUE;
+        long hash = SeedUtil.mixSeed(worldSeed ^ SeedUtil.mixSeed(attempt)
+                ^ SeedUtil.mixSeed(key) ^ SeedUtil.mixSeed(count));
 
-        return Math.max(1, (int) (-Math.log(1.0 - uniform) * expectedTicks));
-    }
-
-    private static boolean hasBurnableNeighbor(ServerWorld world, BlockPos pos) {
-        for (Direction dir : Direction.values()) {
-            if (world.getBlockState(pos.offset(dir)).getMaterial().isBurnable()) return true;
-        }
-        return false;
+        return Math.max(1, (int) (-Math.log(1.0 - SeedUtil.toUniform(hash)) * expectedTicks));
     }
 
     private static boolean hasFlammableNeighbor(ServerWorld world, BlockPos pos) {
         for (Direction dir : Direction.values()) {
-            if (FlammableBlockUtil.isFlammable(world.getBlockState(pos.offset(dir)))) return true;
+            if (FireUtil.isFlammable(world.getBlockState(pos.offset(dir)))) return true;
         }
         return false;
     }
@@ -452,12 +438,4 @@ public class FireEventScheduler {
         return false;
     }
 
-    private static long mixSeed(long seed) {
-        seed ^= (seed >>> 30);
-        seed *= 0xbf58476d1ce4e5b9L;
-        seed ^= (seed >>> 27);
-        seed *= 0x94d049bb133111ebL;
-        seed ^= (seed >>> 31);
-        return seed;
-    }
 }

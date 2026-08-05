@@ -2,20 +2,17 @@ package net.vibzz.woodlightingstandards.util;
 
 import net.minecraft.block.BlockState;
 import net.minecraft.server.world.ServerWorld;
+import net.minecraft.state.property.Properties;
 import net.minecraft.tag.BlockTags;
 import net.minecraft.tag.FluidTags;
-import net.minecraft.state.property.Properties;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
-
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 
 public class PortalLightProbability {
 
-    private static final double LAVA_TICK_CHANCE = 6.0 / 4096.0;
-    private static final double AVG_FIRE_TICK_INTERVAL = 34.5;
 
     public static double compute(ServerWorld world, List<BlockPos> interiorBlocks, int difficulty) {
         return compute(world, interiorBlocks, difficulty, Collections.emptySet());
@@ -27,7 +24,7 @@ public class PortalLightProbability {
         for (BlockPos airPos : interiorBlocks) {
             double airBlockProb = 0;
             airBlockProb += computeLavaContribution(world, airPos);
-            airBlockProb += computeFireSpreadContribution(world, airPos, difficulty, excludeFires);
+            airBlockProb += computeFireContribution(world, airPos, difficulty, excludeFires);
 
             if (airBlockProb > 0) {
                 survivalProb *= (1.0 - Math.min(1.0, airBlockProb));
@@ -38,7 +35,7 @@ public class PortalLightProbability {
     }
 
     private static double computeLavaContribution(ServerWorld world, BlockPos airPos) {
-        boolean hasBurnableNeighbor = hasLavaBurnableNeighbor(world, airPos);
+        boolean hasBurnableNeighbor = FireUtil.hasBurnableNeighbor(world, airPos);
         double prob = 0;
 
         for (int offsetX = -3; offsetX <= 3; offsetX++) {
@@ -46,11 +43,11 @@ public class PortalLightProbability {
                 for (int offsetZ = -3; offsetZ <= 3; offsetZ++) {
                     BlockPos lavaPos = airPos.add(offsetX, offsetY, offsetZ);
                     if (!world.getFluidState(lavaPos).isIn(FluidTags.LAVA)) continue;
-                    if (!LavaReachUtil.canLavaReachSlot(world, lavaPos, airPos)) continue;
+                    if (!LavaUtil.canReach(world, lavaPos, airPos)) continue;
 
-                    double fireReachProb = LavaWeightUtil.calculateWeight(
+                    double fireReachProb = LavaUtil.ignitionChance(
                             world, lavaPos, airPos, hasBurnableNeighbor);
-                    prob += LAVA_TICK_CHANCE * fireReachProb;
+                    prob += FireUtil.LAVA_TICK_CHANCE * fireReachProb;
                 }
             }
         }
@@ -58,15 +55,15 @@ public class PortalLightProbability {
         return prob;
     }
 
-    private static double computeFireSpreadContribution(ServerWorld world, BlockPos airPos, int difficulty, Set<BlockPos> excludeFires) {
+    private static double computeFireContribution(ServerWorld world, BlockPos airPos, int difficulty, Set<BlockPos> excludeFires) {
         int maxBurnChance = 0;
         for (Direction dir : Direction.values()) {
-            int burnChance = FlammableBlockUtil.getBurnChance(world.getBlockState(airPos.offset(dir)));
+            int burnChance = FireUtil.getBurnChance(world.getBlockState(airPos.offset(dir)));
             if (burnChance > maxBurnChance) maxBurnChance = burnChance;
         }
         if (maxBurnChance == 0) return 0;
 
-        if (world.isRaining() && isRainingAround(world, airPos)) return 0;
+        if (world.isRaining() && FireUtil.isRainingAround(world, airPos)) return 0;
 
         double prob = 0;
 
@@ -90,7 +87,7 @@ public class PortalLightProbability {
                     if (igniteChance <= 0) continue;
 
                     double perFireTick = Math.min(1.0, (igniteChance + 1.0) / spreadResistance);
-                    prob += perFireTick / AVG_FIRE_TICK_INTERVAL;
+                    prob += perFireTick / FireUtil.AVG_FIRE_TICK_INTERVAL;
                 }
             }
         }
@@ -98,15 +95,5 @@ public class PortalLightProbability {
         return prob;
     }
 
-    private static boolean isRainingAround(ServerWorld world, BlockPos pos) {
-        return world.hasRain(pos) || world.hasRain(pos.west()) || world.hasRain(pos.east())
-                || world.hasRain(pos.north()) || world.hasRain(pos.south());
-    }
 
-    private static boolean hasLavaBurnableNeighbor(ServerWorld world, BlockPos pos) {
-        for (Direction dir : Direction.values()) {
-            if (world.getBlockState(pos.offset(dir)).getMaterial().isBurnable()) return true;
-        }
-        return false;
-    }
 }

@@ -14,7 +14,7 @@ import net.minecraft.world.World;
 import net.vibzz.woodlightingstandards.Woodlightingstandards;
 import net.vibzz.woodlightingstandards.mixin.AreaHelperAccessor;
 import net.vibzz.woodlightingstandards.util.PortalLightProbability;
-import net.vibzz.woodlightingstandards.util.SeedTimingUtil;
+import net.vibzz.woodlightingstandards.util.SeedUtil;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -169,7 +169,7 @@ public class WoodlightTracker {
                 double rate = 0;
                 for (PortalLightEntry e : activeEntries) rate += e.perTickProbability;
 
-                double target = SeedTimingUtil.calculateTargetCumulative(world.getSeed(), state.peekNextAttempt());
+                double target = SeedUtil.calculateTargetCumulative(world.getSeed(), state.peekNextAttempt());
                 double progress = state.getGlobalProgress() + rate;
 
                 if (progress >= target) {
@@ -208,7 +208,7 @@ public class WoodlightTracker {
         for (PortalLightEntry e : sorted) total += e.perTickProbability;
         if (total <= 0) return sorted.get(0);
 
-        long mixed = mixSeed(seed ^ mixSeed(attempt) ^ 0x57494E4EL);
+        long mixed = SeedUtil.mixSeed(seed ^ SeedUtil.mixSeed(attempt) ^ 0x57494E4EL);
         double uniform = (double) (mixed & 0x7FFFFFFFFFFFFFFFL) / ((double) Long.MAX_VALUE + 1.0);
         double threshold = uniform * total;
 
@@ -220,14 +220,6 @@ public class WoodlightTracker {
         return sorted.get(sorted.size() - 1);
     }
 
-    private static long mixSeed(long seed) {
-        seed ^= (seed >>> 30);
-        seed *= 0xbf58476d1ce4e5b9L;
-        seed ^= (seed >>> 27);
-        seed *= 0x94d049bb133111ebL;
-        seed ^= (seed >>> 31);
-        return seed;
-    }
 
     private void persistEntries(ServerWorld world) {
         CopyOnWriteArrayList<PortalLightEntry> entries = activeTimers.get(world.getRegistryKey());
@@ -240,10 +232,10 @@ public class WoodlightTracker {
             BlockPos playerPos = player.getBlockPos();
             Set<Long> checkedFrames = new HashSet<>();
 
-            for (int dx = -SCAN_RADIUS; dx <= SCAN_RADIUS; dx++) {
-                for (int dy = -SCAN_RADIUS; dy <= SCAN_RADIUS; dy++) {
-                    for (int dz = -SCAN_RADIUS; dz <= SCAN_RADIUS; dz++) {
-                        BlockPos pos = playerPos.add(dx, dy, dz);
+            for (int offsetX = -SCAN_RADIUS; offsetX <= SCAN_RADIUS; offsetX++) {
+                for (int offsetY = -SCAN_RADIUS; offsetY <= SCAN_RADIUS; offsetY++) {
+                    for (int offsetZ = -SCAN_RADIUS; offsetZ <= SCAN_RADIUS; offsetZ++) {
+                        BlockPos pos = playerPos.add(offsetX, offsetY, offsetZ);
                         if (!world.getBlockState(pos).isOf(Blocks.OBSIDIAN)) continue;
 
                         BlockPos above = pos.up();
@@ -313,9 +305,9 @@ public class WoodlightTracker {
         Direction negativeDir = (axis == Direction.Axis.X) ? Direction.WEST : Direction.SOUTH;
 
         List<BlockPos> result = new ArrayList<>();
-        for (int i = 0; i < width; i++) {
-            for (int j = 0; j < height; j++) {
-                result.add(lowerCorner.offset(negativeDir, i).up(j).toImmutable());
+        for (int column = 0; column < width; column++) {
+            for (int row = 0; row < height; row++) {
+                result.add(lowerCorner.offset(negativeDir, column).up(row).toImmutable());
             }
         }
         return result;
@@ -338,14 +330,13 @@ public class WoodlightTracker {
         List<BlockPos> result = new ArrayList<>();
         Set<BlockPos> seen = new HashSet<>();
         for (BlockPos airPos : interiorBlocks) {
-            for (int dx = -3; dx <= 3; dx++) {
-                for (int dy = -3; dy <= 0; dy++) {
-                    for (int dz = -3; dz <= 3; dz++) {
-                        BlockPos checkPos = airPos.add(dx, dy, dz);
-                        if (seen.contains(checkPos)) continue;
-                        seen.add(checkPos);
-                        if (world.getFluidState(checkPos).isIn(FluidTags.LAVA)) {
-                            result.add(checkPos.toImmutable());
+            for (int offsetX = -3; offsetX <= 3; offsetX++) {
+                for (int offsetY = -3; offsetY <= 0; offsetY++) {
+                    for (int offsetZ = -3; offsetZ <= 3; offsetZ++) {
+                        BlockPos lavaPos = airPos.add(offsetX, offsetY, offsetZ);
+                        if (!seen.add(lavaPos)) continue;
+                        if (world.getFluidState(lavaPos).isIn(FluidTags.LAVA)) {
+                            result.add(lavaPos.toImmutable());
                         }
                     }
                 }
@@ -381,16 +372,16 @@ public class WoodlightTracker {
 
         List<BlockPos> interior = new ArrayList<>();
         List<BlockPos> frame = new ArrayList<>();
-        for (int i = 0; i < width; i++) {
-            for (int j = 0; j < height; j++) {
-                interior.add(start.offset(posDir, i).up(j).toImmutable());
+        for (int column = 0; column < width; column++) {
+            for (int row = 0; row < height; row++) {
+                interior.add(start.offset(posDir, column).up(row).toImmutable());
             }
-            frame.add(start.offset(posDir, i).down().toImmutable());
-            frame.add(start.offset(posDir, i).up(height).toImmutable());
+            frame.add(start.offset(posDir, column).down().toImmutable());
+            frame.add(start.offset(posDir, column).up(height).toImmutable());
         }
-        for (int j = 0; j < height; j++) {
-            frame.add(start.offset(negDir).up(j).toImmutable());
-            frame.add(start.offset(posDir, width).up(j).toImmutable());
+        for (int row = 0; row < height; row++) {
+            frame.add(start.offset(negDir).up(row).toImmutable());
+            frame.add(start.offset(posDir, width).up(row).toImmutable());
         }
 
         PortalLightEntry entry = new PortalLightEntry(
@@ -428,13 +419,13 @@ public class WoodlightTracker {
         Direction positiveDir = negativeDir.getOpposite();
 
         List<BlockPos> result = new ArrayList<>();
-        for (int i = 0; i < width; i++) {
-            result.add(lowerCorner.offset(negativeDir, i).down().toImmutable());
-            result.add(lowerCorner.offset(negativeDir, i).up(height).toImmutable());
+        for (int column = 0; column < width; column++) {
+            result.add(lowerCorner.offset(negativeDir, column).down().toImmutable());
+            result.add(lowerCorner.offset(negativeDir, column).up(height).toImmutable());
         }
-        for (int j = 0; j < height; j++) {
-            result.add(lowerCorner.offset(positiveDir).up(j).toImmutable());
-            result.add(lowerCorner.offset(negativeDir, width).up(j).toImmutable());
+        for (int row = 0; row < height; row++) {
+            result.add(lowerCorner.offset(positiveDir).up(row).toImmutable());
+            result.add(lowerCorner.offset(negativeDir, width).up(row).toImmutable());
         }
         return result;
     }
@@ -444,14 +435,14 @@ public class WoodlightTracker {
         Set<BlockPos> seen = new HashSet<>();
         List<BlockPos> fires = new ArrayList<>();
         for (BlockPos interior : interiorBlocks) {
-            for (int dx = -3; dx <= 3; dx++) {
-                for (int dy = -2; dy <= 4; dy++) {
-                    for (int dz = -3; dz <= 3; dz++) {
-                        BlockPos pos = interior.add(dx, dy, dz);
-                        if (!seen.add(pos)) continue;
-                        if (!world.getBlockState(pos).isIn(BlockTags.FIRE)) continue;
-                        if (world.getBlockState(pos.down()).isIn(world.getDimension().getInfiniburnBlocks())) continue;
-                        fires.add(pos.toImmutable());
+            for (int offsetX = -3; offsetX <= 3; offsetX++) {
+                for (int offsetY = -2; offsetY <= 4; offsetY++) {
+                    for (int offsetZ = -3; offsetZ <= 3; offsetZ++) {
+                        BlockPos firePos = interior.add(offsetX, offsetY, offsetZ);
+                        if (!seen.add(firePos)) continue;
+                        if (!world.getBlockState(firePos).isIn(BlockTags.FIRE)) continue;
+                        if (world.getBlockState(firePos.down()).isIn(world.getDimension().getInfiniburnBlocks())) continue;
+                        fires.add(firePos.toImmutable());
                     }
                 }
             }
@@ -465,12 +456,12 @@ public class WoodlightTracker {
         List<BlockPos> result = new ArrayList<>();
         Set<BlockPos> seen = new HashSet<>();
         for (BlockPos interior : interiorBlocks) {
-            for (int dx = -2; dx <= 2; dx++) {
-                for (int dy = -1; dy <= 2; dy++) {
-                    for (int dz = -2; dz <= 2; dz++) {
-                        BlockPos pos = interior.add(dx, dy, dz);
-                        if (!seen.add(pos)) continue;
-                        if (world.getBlockState(pos).isIn(BlockTags.FIRE)) result.add(pos.toImmutable());
+            for (int offsetX = -2; offsetX <= 2; offsetX++) {
+                for (int offsetY = -1; offsetY <= 2; offsetY++) {
+                    for (int offsetZ = -2; offsetZ <= 2; offsetZ++) {
+                        BlockPos firePos = interior.add(offsetX, offsetY, offsetZ);
+                        if (!seen.add(firePos)) continue;
+                        if (world.getBlockState(firePos).isIn(BlockTags.FIRE)) result.add(firePos.toImmutable());
                     }
                 }
             }

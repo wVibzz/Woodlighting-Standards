@@ -8,7 +8,7 @@ import net.vibzz.woodlightingstandards.Woodlightingstandards;
 import net.vibzz.woodlightingstandards.portal.PortalLightEntry;
 import net.vibzz.woodlightingstandards.portal.WoodlightPersistentState;
 import net.vibzz.woodlightingstandards.portal.WoodlightTracker;
-import net.vibzz.woodlightingstandards.util.SeedTimingUtil;
+import net.vibzz.woodlightingstandards.util.SeedUtil;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -74,7 +74,7 @@ public class PortalScanResult {
         WoodlightPersistentState state = WoodlightPersistentState.get(serverWorld);
         attempt = state.peekNextAttempt();
         globalProgress = state.getGlobalProgress();
-        globalTarget = SeedTimingUtil.calculateTargetCumulative(serverWorld.getSeed(), attempt);
+        globalTarget = SeedUtil.calculateTargetCumulative(serverWorld.getSeed(), attempt);
 
         List<PortalLightEntry> entries = WoodlightTracker.getInstance().getAllEntries(serverWorld);
         if (entries == null || entries.isEmpty()) {
