@@ -6,6 +6,7 @@
   "mixins": [
     "AbstractFireBlockMixin",
     "AreaHelperAccessor",
+    "FireBlockAccessor",
     "FireBlockMixin",
     "LavaFluidMixin",
     "MinecraftServerMixin",
