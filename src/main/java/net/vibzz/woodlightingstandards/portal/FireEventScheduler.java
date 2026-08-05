@@ -1,4 +1,4 @@
-package net.vibzz.woodlightingstandards.fire;
+package net.vibzz.woodlightingstandards.portal;
 
 import net.minecraft.block.AbstractFireBlock;
 import net.minecraft.block.BlockState;
@@ -6,10 +6,10 @@ import net.minecraft.block.FireBlock;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.tag.FluidTags;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;import net.vibzz.woodlightingstandards.util.FireUtil;
+import net.minecraft.util.math.Direction;
+import net.vibzz.woodlightingstandards.util.FireUtil;
 import net.vibzz.woodlightingstandards.util.LavaUtil;
 import net.vibzz.woodlightingstandards.util.SeedUtil;
-
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -30,6 +30,7 @@ public class FireEventScheduler {
     private final Map<Long, Integer> positionCounters = new HashMap<>();
     private final Map<BlockPos, TrackedFire> trackedFires = new HashMap<>();
     private final Map<Long, Integer> fireSeedCounters = new HashMap<>();
+    private final Map<Long, Integer> burnOutcomeCounters = new HashMap<>();
     private int lastDifficulty = -1;
 
     private static final class TrackedFire {
@@ -48,23 +49,44 @@ public class FireEventScheduler {
         return SUPPRESS_FIRE_PORTAL.get();
     }
 
-    private void placeFireSuppressed(ServerWorld world, BlockPos pos, long currentTick) {
+    private void placeFireSuppressed(ServerWorld world, BlockPos pos, int age, long currentTick) {
         SUPPRESS_FIRE_PORTAL.set(Boolean.TRUE);
         try {
-            world.setBlockState(pos, AbstractFireBlock.getState(world, pos), 3);
-            registerFire(pos, currentTick);
+            BlockState fireState = AbstractFireBlock.getState(world, pos);
+            if (age > 0 && fireState.contains(FireBlock.AGE)) {
+                fireState = fireState.with(FireBlock.AGE, age);
+            }
+            world.setBlockState(pos, fireState, 3);
+            registerFire(pos, age, currentTick);
         } finally {
             SUPPRESS_FIRE_PORTAL.set(Boolean.FALSE);
         }
     }
 
-    private void registerFire(BlockPos pos, long currentTick) {
+    private void registerFire(BlockPos pos, int age, long currentTick) {
         BlockPos immut = pos.toImmutable();
         if (trackedFires.containsKey(immut)) return;
         long key = canonicalKey(immut);
         int count = fireSeedCounters.merge(key, 1, Integer::sum);
         Random rng = new Random(SeedUtil.mixSeed(worldSeed ^ SeedUtil.mixSeed(attempt) ^ SeedUtil.mixSeed(key) ^ SeedUtil.mixSeed(count) ^ 0x4655454CL));
-        trackedFires.put(immut, new TrackedFire(rng, currentTick + 30 + rng.nextInt(10)));
+        TrackedFire fire = new TrackedFire(rng, currentTick + 30 + rng.nextInt(10));
+        fire.age = age;
+        trackedFires.put(immut, fire);
+    }
+
+    private int adjacentFireAge(BlockPos pos) {
+        for (Direction dir : Direction.values()) {
+            TrackedFire fire = trackedFires.get(pos.offset(dir));
+            if (fire != null) return fire.age;
+        }
+        return 0;
+    }
+
+    private Random burnOutcomeRandom(BlockPos pos) {
+        long key = canonicalKey(pos);
+        int count = burnOutcomeCounters.merge(key, 1, Integer::sum);
+        return new Random(SeedUtil.mixSeed(worldSeed ^ SeedUtil.mixSeed(attempt)
+                ^ SeedUtil.mixSeed(key) ^ SeedUtil.mixSeed(count) ^ 0x4255524EL));
     }
 
     public Map<BlockPos, Long> getScheduledLavaFires() { return scheduledLavaFires; }
@@ -142,7 +164,7 @@ public class FireEventScheduler {
                         BlockPos immut = pos.toImmutable();
                         if (trackedFires.containsKey(immut)) continue;
                         if (!excludePendingFires.isEmpty() && excludePendingFires.contains(immut)) continue;
-                        registerFire(immut, currentTick);
+                        registerFire(immut, 0, currentTick);
                         newlyDiscovered.add(immut);
                     }
                 }
@@ -327,7 +349,7 @@ public class FireEventScheduler {
 
             if (!world.getBlockState(pos).isAir()) continue;
 
-            placeFireSuppressed(world, pos, currentTick);
+            placeFireSuppressed(world, pos, 0, currentTick);
             placed.add(pos);
         }
         for (BlockPos pos : placed) {
@@ -348,8 +370,14 @@ public class FireEventScheduler {
             BlockState state = world.getBlockState(pos);
             if (!FireUtil.isFlammable(state)) continue;
 
-            placeFireSuppressed(world, pos, currentTick);
-            burned.add(pos);
+            int sourceAge = adjacentFireAge(pos);
+            Random rng = burnOutcomeRandom(pos);
+            if (rng.nextInt(sourceAge + 10) < 5 && !world.hasRain(pos)) {
+                placeFireSuppressed(world, pos, Math.min(sourceAge + rng.nextInt(5) / 4, 15), currentTick);
+                burned.add(pos);
+            } else {
+                world.removeBlock(pos, false);
+            }
         }
         for (BlockPos pos : burned) {
             onFirePlaced(world, pos, interiorSet, currentTick, difficulty);
@@ -363,9 +391,13 @@ public class FireEventScheduler {
             BlockState neighborState = world.getBlockState(neighbor);
 
             if (FireUtil.isFlammable(neighborState) && !scheduledBurnAway.containsKey(neighbor)) {
-                int burnTime = BurnAwayTiming.calculateBurnTime(neighborState, canonicalKey(neighbor), worldSeed);
-                if (burnTime > 0) {
-                    scheduledBurnAway.put(neighbor.toImmutable(), currentTick + burnTime);
+                int spreadFactor = (dir.getAxis().isVertical() ? 250 : 300)
+                        - (world.hasHighHumidity(firePos) ? 50 : 0);
+                double burnChancePerTick = FireUtil.getSpreadChance(neighborState)
+                        / (spreadFactor * FireUtil.AVG_FIRE_TICK_INTERVAL);
+                if (burnChancePerTick > 0) {
+                    scheduledBurnAway.put(neighbor.toImmutable(),
+                            currentTick + probabilityToTicks(burnChancePerTick, neighbor));
                 }
             }
         }

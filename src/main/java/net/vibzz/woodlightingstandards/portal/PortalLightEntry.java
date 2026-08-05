@@ -2,8 +2,6 @@ package net.vibzz.woodlightingstandards.portal;
 
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
-import net.vibzz.woodlightingstandards.fire.FireEventScheduler;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
