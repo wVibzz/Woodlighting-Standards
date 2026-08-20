@@ -23,15 +23,29 @@ import java.util.Set;
 public class FireEventScheduler {
 
 
-    private final Map<BlockPos, Long> scheduledLavaFires = new HashMap<>();
-    private final Map<BlockPos, Long> scheduledSpreadFires = new HashMap<>();
-    private final Map<BlockPos, Integer> spreadResistances = new HashMap<>();
+    private final Map<BlockPos, ScheduledFire> scheduledLavaFires = new HashMap<>();
+    private final Map<BlockPos, ScheduledFire> scheduledSpreadFires = new HashMap<>();
     private final Map<BlockPos, Long> scheduledBurnAway = new HashMap<>();
     private final Map<Long, Integer> positionCounters = new HashMap<>();
     private final Map<BlockPos, TrackedFire> trackedFires = new HashMap<>();
     private final Map<Long, Integer> fireSeedCounters = new HashMap<>();
     private final Map<Long, Integer> burnOutcomeCounters = new HashMap<>();
+    private final Map<Long, Integer> spreadAgeCounters = new HashMap<>();
     private int lastDifficulty = -1;
+    
+    private static final class ScheduledFire {
+        final int resistance;
+        final int sourceAge;
+        final boolean humid;
+        final boolean fromSpread;
+        long tick;
+        ScheduledFire(int resistance, int sourceAge, boolean humid, boolean fromSpread) {
+            this.resistance = resistance;
+            this.sourceAge = sourceAge;
+            this.humid = humid;
+            this.fromSpread = fromSpread;
+        }
+    }
 
     private static final class TrackedFire {
         final Random rng;
@@ -82,16 +96,22 @@ public class FireEventScheduler {
         return 0;
     }
 
-    private Random burnOutcomeRandom(BlockPos pos) {
+    private Random seededRandom(BlockPos pos, Map<Long, Integer> counters, long salt) {
         long key = canonicalKey(pos);
-        int count = burnOutcomeCounters.merge(key, 1, Integer::sum);
+        int count = counters.merge(key, 1, Integer::sum);
         return new Random(SeedUtil.mixSeed(worldSeed ^ SeedUtil.mixSeed(attempt)
-                ^ SeedUtil.mixSeed(key) ^ SeedUtil.mixSeed(count) ^ 0x4255524EL));
+                ^ SeedUtil.mixSeed(key) ^ SeedUtil.mixSeed(count) ^ salt));
     }
 
-    public Map<BlockPos, Long> getScheduledLavaFires() { return scheduledLavaFires; }
-    public Map<BlockPos, Long> getScheduledSpreadFires() { return scheduledSpreadFires; }
+    public Map<BlockPos, Long> getScheduledLavaFires() { return tickView(scheduledLavaFires); }
+    public Map<BlockPos, Long> getScheduledSpreadFires() { return tickView(scheduledSpreadFires); }
     public Map<BlockPos, Long> getScheduledBurnAway() { return scheduledBurnAway; }
+
+    private static Map<BlockPos, Long> tickView(Map<BlockPos, ScheduledFire> map) {
+        Map<BlockPos, Long> view = new HashMap<>();
+        map.forEach((pos, scheduled) -> view.put(pos, scheduled.tick));
+        return view;
+    }
 
     private final long worldSeed;
     private final int attempt;
@@ -160,11 +180,12 @@ public class FireEventScheduler {
                         BlockPos pos = interior.add(offsetX, offsetY, offsetZ);
                         if (!seen.add(pos)) continue;
                         if (interiorSet.contains(pos)) continue;
-                        if (!world.getBlockState(pos).isIn(net.minecraft.tag.BlockTags.FIRE)) continue;
+                        BlockState state = world.getBlockState(pos);
+                        if (!state.isIn(net.minecraft.tag.BlockTags.FIRE)) continue;
                         BlockPos immut = pos.toImmutable();
                         if (trackedFires.containsKey(immut)) continue;
                         if (!excludePendingFires.isEmpty() && excludePendingFires.contains(immut)) continue;
-                        registerFire(immut, 0, currentTick);
+                        registerFire(immut, state.contains(FireBlock.AGE) ? state.get(FireBlock.AGE) : 0, currentTick);
                         newlyDiscovered.add(immut);
                     }
                 }
@@ -235,18 +256,18 @@ public class FireEventScheduler {
 
 
     private void rescheduleSpreadFires(ServerWorld world, long currentTick, int newDifficulty) {
-        Map<BlockPos, Long> rescheduled = new HashMap<>();
-        for (Map.Entry<BlockPos, Long> entry : scheduledSpreadFires.entrySet()) {
+        Iterator<Map.Entry<BlockPos, ScheduledFire>> iter = scheduledSpreadFires.entrySet().iterator();
+        while (iter.hasNext()) {
+            Map.Entry<BlockPos, ScheduledFire> entry = iter.next();
             BlockPos pos = entry.getKey();
-            int spreadResistance = spreadResistances.getOrDefault(pos, 100);
-            double spreadProb = computeFireSpreadProbability(world, pos, newDifficulty, spreadResistance);
-            if (spreadProb > 0) {
-                rescheduled.put(pos, currentTick + probabilityToTicks(spreadProb, pos));
+            ScheduledFire scheduled = entry.getValue();
+            double spreadProb = computeFireSpreadProbability(world, pos, newDifficulty, scheduled);
+            if (spreadProb <= 0) {
+                iter.remove();
+                continue;
             }
+            scheduled.tick = currentTick + probabilityToTicks(spreadProb, pos);
         }
-        scheduledSpreadFires.clear();
-        scheduledSpreadFires.putAll(rescheduled);
-        spreadResistances.keySet().retainAll(rescheduled.keySet());
     }
 
     private void validateScheduled(ServerWorld world) {
@@ -269,8 +290,6 @@ public class FireEventScheduler {
             if (!FireUtil.isFlammable(world.getBlockState(pos))) return true;
             return !hasFireNeighbor(world, pos);
         });
-
-        spreadResistances.keySet().retainAll(scheduledSpreadFires.keySet());
     }
 
     private void scheduleLavaFires(ServerWorld world, List<BlockPos> interiorBlocks, Set<BlockPos> interiorSet, long currentTick) {
@@ -283,8 +302,9 @@ public class FireEventScheduler {
             double prob = computeTargetProbability(world, target);
             if (prob <= 0) continue;
 
-            long fireTick = currentTick + probabilityToTicks(prob, target);
-            scheduledLavaFires.put(target.toImmutable(), fireTick);
+            ScheduledFire scheduled = new ScheduledFire(0, 0, false, false);
+            scheduled.tick = currentTick + probabilityToTicks(prob, target);
+            scheduledLavaFires.put(target.toImmutable(), scheduled);
         }
     }
 
@@ -337,19 +357,27 @@ public class FireEventScheduler {
         processFireMap(scheduledSpreadFires, world, interiorSet, currentTick, difficulty);
     }
 
-    private void processFireMap(Map<BlockPos, Long> map, ServerWorld world, Set<BlockPos> interiorSet, long currentTick, int difficulty) {
+    private void processFireMap(Map<BlockPos, ScheduledFire> map, ServerWorld world,
+                                Set<BlockPos> interiorSet, long currentTick, int difficulty) {
         List<BlockPos> placed = new ArrayList<>();
-        Iterator<Map.Entry<BlockPos, Long>> iter = map.entrySet().iterator();
+        Iterator<Map.Entry<BlockPos, ScheduledFire>> iter = map.entrySet().iterator();
         while (iter.hasNext()) {
-            Map.Entry<BlockPos, Long> entry = iter.next();
-            if (currentTick < entry.getValue()) continue;
+            Map.Entry<BlockPos, ScheduledFire> entry = iter.next();
+            ScheduledFire scheduled = entry.getValue();
+            if (currentTick < scheduled.tick) continue;
 
             BlockPos pos = entry.getKey();
             iter.remove();
 
             if (!world.getBlockState(pos).isAir()) continue;
 
-            placeFireSuppressed(world, pos, 0, currentTick);
+            int age = 0;
+            if (scheduled.fromSpread) {
+                Random rng = seededRandom(pos, spreadAgeCounters, 0x53505244L);
+                age = Math.min(15, scheduled.sourceAge + rng.nextInt(5) / 4);
+            }
+
+            placeFireSuppressed(world, pos, age, currentTick);
             placed.add(pos);
         }
         for (BlockPos pos : placed) {
@@ -371,7 +399,7 @@ public class FireEventScheduler {
             if (!FireUtil.isFlammable(state)) continue;
 
             int sourceAge = adjacentFireAge(pos);
-            Random rng = burnOutcomeRandom(pos);
+            Random rng = seededRandom(pos, burnOutcomeCounters, 0x4255524EL);
             if (rng.nextInt(sourceAge + 10) < 5 && !world.hasRain(pos)) {
                 placeFireSuppressed(world, pos, Math.min(sourceAge + rng.nextInt(5) / 4, 15), currentTick);
                 burned.add(pos);
@@ -385,14 +413,17 @@ public class FireEventScheduler {
     }
 
     private void onFirePlaced(ServerWorld world, BlockPos firePos, Set<BlockPos> interiorSet, long currentTick, int difficulty) {
+        TrackedFire source = trackedFires.get(firePos);
+        int sourceAge = source != null ? source.age : 0;
+        boolean humid = world.hasHighHumidity(firePos);
+
         for (Direction dir : Direction.values()) {
             BlockPos neighbor = firePos.offset(dir);
             if (interiorSet.contains(neighbor)) continue;
             BlockState neighborState = world.getBlockState(neighbor);
 
             if (FireUtil.isFlammable(neighborState) && !scheduledBurnAway.containsKey(neighbor)) {
-                int spreadFactor = (dir.getAxis().isVertical() ? 250 : 300)
-                        - (world.hasHighHumidity(firePos) ? 50 : 0);
+                int spreadFactor = (dir.getAxis().isVertical() ? 250 : 300) - (humid ? 50 : 0);
                 double burnChancePerTick = FireUtil.getSpreadChance(neighborState)
                         / (spreadFactor * FireUtil.AVG_FIRE_TICK_INTERVAL);
                 if (burnChancePerTick > 0) {
@@ -415,18 +446,18 @@ public class FireEventScheduler {
                     int spreadResistance = 100;
                     if (offsetY > 1) spreadResistance += (offsetY - 1) * 100;
 
-                    double spreadProb = computeFireSpreadProbability(world, target, difficulty, spreadResistance);
+                    ScheduledFire scheduled = new ScheduledFire(spreadResistance, sourceAge, humid, true);
+                    double spreadProb = computeFireSpreadProbability(world, target, difficulty, scheduled);
                     if (spreadProb > 0) {
-                        long spreadTick = currentTick + probabilityToTicks(spreadProb, target);
-                        scheduledSpreadFires.put(target.toImmutable(), spreadTick);
-                        spreadResistances.put(target.toImmutable(), spreadResistance);
+                        scheduled.tick = currentTick + probabilityToTicks(spreadProb, target);
+                        scheduledSpreadFires.put(target.toImmutable(), scheduled);
                     }
                 }
             }
         }
     }
 
-    private double computeFireSpreadProbability(ServerWorld world, BlockPos airPos, int difficulty, int spreadResistance) {
+    private double computeFireSpreadProbability(ServerWorld world, BlockPos airPos, int difficulty, ScheduledFire scheduled) {
         int maxBurnChance = 0;
         for (Direction dir : Direction.values()) {
             int burnChance = FireUtil.getBurnChance(world.getBlockState(airPos.offset(dir)));
@@ -435,11 +466,11 @@ public class FireEventScheduler {
         if (maxBurnChance == 0) return 0;
         if (world.isRaining() && FireUtil.isRainingAround(world, airPos)) return 0;
 
-        int igniteChance = (maxBurnChance + 40 + difficulty * 7) / 30;
-        if (world.hasHighHumidity(airPos)) igniteChance /= 2;
+        int igniteChance = (maxBurnChance + 40 + difficulty * 7) / (scheduled.sourceAge + 30);
+        if (scheduled.humid) igniteChance /= 2;
         if (igniteChance <= 0) return 0;
 
-        double perFireTick = Math.min(1.0, (igniteChance + 1.0) / spreadResistance);
+        double perFireTick = Math.min(1.0, (igniteChance + 1.0) / scheduled.resistance);
         return perFireTick / FireUtil.AVG_FIRE_TICK_INTERVAL;
     }
 
