@@ -18,10 +18,24 @@ Now this doesn't mean you can put one lava source and 1 plank next to the portal
 
 We take care of that by making sure orientation doesn't matter. If we seeded off world coordinates, then the same setup built on the other side of a lava pool would derive and give you completely different timings. So `canonicalKey` takes the block's offset from the detected portal, which mirrors and rotates onto the same relative values.
 
-### How pre-portal fires are handled
+### Q and A
+- Q: How are pre-portal fires handled?
+- A: We simply schedule pre-existing fires around the portal to burn out and they don't contribute anything to the global counter or change world state.
 
-We simply schedule pre-existing fires to burn out and they don't contribute anything to the global counter or change world state.
+- Q: What happens if a detected portal is obstructed?
+- A: Progress is not lost, just paused until the portal is clear again
 
+- Q: Do 2 portals that are built have the same rng while playing out a seed?
+- A: Multiple portals are handled. If both are active setups then 1 is randomly chosen to light upon target probability is reached.
+
+- Q: Do portal setups always have the same target?
+- A: No, once one portal lights the target probability increments to try #2, and the next portal setup will use a new target probability. This is the same for both players.
+
+- Q: Does Easy/Hard Difficulty work the same?
+- A: Yes, Hard means you have more probability of a light.
+
+- Q: What counts as a detected portal?
+- A: Any vanilla supported portal size without obstructions like blocks or fluids.
 
 ### Credits
 @ClearColdWater 
